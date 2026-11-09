@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 export type ProjectConfig = {
   store: string;
@@ -119,6 +119,44 @@ export function run(command: string, args: string[], cwd: string, execute = fals
     '[REDACTED]',
   );
   return { ok: result.status === 0, output, command: printable };
+}
+
+export type InteractiveResult = { code: number | null; signal: NodeJS.Signals | null };
+
+export function runInteractive(
+  command: string,
+  args: string[],
+  cwd: string,
+  spawnProcess: typeof spawn = spawn,
+): Promise<InteractiveResult> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawnProcess(command, args, {
+      cwd,
+      env: safeEnvironment(process.env),
+      shell: false,
+      stdio: 'inherit',
+    });
+    const forwardInterrupt = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGINT');
+    };
+    const forwardTermination = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    };
+    const cleanup = () => {
+      process.off('SIGINT', forwardInterrupt);
+      process.off('SIGTERM', forwardTermination);
+    };
+    process.on('SIGINT', forwardInterrupt);
+    process.on('SIGTERM', forwardTermination);
+    child.once('error', (error) => {
+      cleanup();
+      rejectPromise(error);
+    });
+    child.once('exit', (code, signal) => {
+      cleanup();
+      resolvePromise({ code, signal });
+    });
+  });
 }
 
 export function shopifyCommandArgs(config: ProjectConfig, args: string[]): string[] {

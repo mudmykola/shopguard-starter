@@ -29,3 +29,7 @@ Title: One-command Shopify theme developer workflow. `sgd setup` now adds missin
 ## 2026-11-09 11:58 — Improvement
 
 Title: README rewritten in Ukrainian. Replaced the English guide with a step-by-step explanation of creating a private client repository, configuring and initializing a store project, running daily checks, using optional hooks and browser tests, and understanding Shopify/Git safety boundaries. Verified commands against `src/cli.ts`; `git diff --check` passes. No store, Git remote, commit, or package publishing action was performed. Module: Documentation/README. Issue: #4.
+
+## 2026-11-09 13:47 — Fix
+
+Title: Keep Shopify development preview running and document the GitHub release flow. `sgd dev` now starts Shopify CLI as a long-running child with inherited terminal output, no generic timeout, and clean Ctrl+C handling. README documents `feature/*` → PR to `dev` → connected unpublished theme review → PR to `master` → connected published Live theme, including the immediate production effect of merging to `master` and Shopify's two-way GitHub sync. Added offline process tests. Validation: `npm run check` passes (41 unit tests); three opt-in browser tests skip without a preview URL; `git diff --check` passes. No Shopify store or Git remote was accessed. Module: CLI/README. Issue: #5.

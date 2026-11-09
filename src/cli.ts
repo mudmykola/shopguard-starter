@@ -25,6 +25,7 @@ import {
   remoteThemeArgs,
   remotePreflight,
   run,
+  runInteractive,
   saveConfig,
   setupLocal,
   shopifyCommandArgs,
@@ -173,9 +174,12 @@ async function main(): Promise<void> {
     parseThemeList(listed.output, config.store);
     console.log(`Target store verified: ${config.store}. Shopify CLI may upload the current theme to a development theme.\nshopify ${devArgs.join(' ')}`);
     if (!await createPrompt()(`Start Shopify development for ${config.store}?`, `DEV ${config.store}`)) fail('Development was not confirmed.');
-    const result = run('shopify', devArgs, root, true);
-    if (!result.ok) fail(`Shopify development failed. ${result.output}`);
-    console.log(result.output);
+    const result = await runInteractive('shopify', devArgs, root);
+    if (result.signal === 'SIGINT') {
+      console.log('\nShopify preview зупинено.');
+      return;
+    }
+    if (result.code !== 0) fail(`Shopify preview завершився з кодом ${result.code ?? result.signal ?? 'невідомо'}.`);
     return;
   }
   if (command === 'sync') {

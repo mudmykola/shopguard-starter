@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import { initProject } from '../dist/workflow.js';
 import {
   changedThemeFiles, checkProject, findLiveTheme, guardClientRepository, guardPush, importNewFiles,
   parseThemeList, planThemeImport, preflight, protectedFiles, pullArgs,
-  run, safeEnvironment, setupLocal, shopifyCommandArgs, validateConfig,
+  run, runInteractive, safeEnvironment, setupLocal, shopifyCommandArgs, validateConfig,
   verifyThemeStructure, remotePreflight, managePreCommitHook, missingSetupDependencies, packageManagerCommand,
 } from '../dist/core.js';
 import { pushTheme, pushThemeBaseline } from '../dist/push.js';
@@ -425,5 +426,34 @@ test('38. setup follows the repository package manager and stops on ambiguous lo
     assert.throws(() => packageManagerCommand(root), /Several package-manager lockfiles/);
     writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'yarn@4.0.0' }));
     assert.deepEqual(packageManagerCommand(root), { command: 'yarn', installArgs: ['add', '--dev'] });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('39. interactive Shopify dev process has no timeout and inherits terminal output', async () => {
+  const root = tempDir();
+  try {
+    const child = new EventEmitter();
+    child.exitCode = null; child.signalCode = null;
+    let invocation;
+    const fakeSpawn = (command, args, options) => {
+      invocation = { command, args, options };
+      process.nextTick(() => child.emit('exit', 0, null));
+      return child;
+    };
+    const result = await runInteractive('shopify', ['theme', 'dev'], root, fakeSpawn);
+    assert.equal(result.code, 0); assert.equal(result.signal, null);
+    assert.equal(invocation.command, 'shopify');
+    assert.equal(invocation.options.stdio, 'inherit');
+    assert.equal(invocation.options.shell, false);
+    assert.equal('timeout' in invocation.options, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('40. interactive Shopify dev reports Ctrl+C as a normal operator stop', async () => {
+  const root = tempDir();
+  try {
+    const child = new EventEmitter();
+    child.exitCode = null; child.signalCode = null;
+    const fakeSpawn = () => { process.nextTick(() => child.emit('exit', null, 'SIGINT')); return child; };
+    const result = await runInteractive('shopify', ['theme', 'dev'], root, fakeSpawn);
+    assert.equal(result.code, null); assert.equal(result.signal, 'SIGINT');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
