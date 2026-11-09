@@ -7,13 +7,16 @@ import { join, resolve } from 'node:path';
 import {
   checkProject,
   changedThemeFiles,
+  diagnoseProject,
   findRoot,
   gitState,
   guardClientRepository,
-  guardPush,
   isTheme,
   listFiles,
   loadConfig,
+  managePreCommitHook,
+  missingSetupDependencies,
+  packageManagerCommand,
   parseThemeList,
   preflight,
   planThemeImport,
@@ -28,6 +31,7 @@ import {
   validateConfig,
 } from './core.js';
 import { initProject } from './workflow.js';
+import { pushTheme, pushThemeBaseline } from './push.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '--help';
@@ -38,17 +42,22 @@ const help = () => console.log(`sgd 0.3.0
 Commands:
   configure  create .shopguard/project.json for this client project
   init       import an existing Live theme or create a new skeleton
-  setup      add quality tooling without overwriting existing files
-  status     show project and integration state
-  doctor     read-only local diagnostics
+  setup      add quality tooling, VS Code defaults and optional hooks
+  status     show actionable project and integration state
+  doctor     read-only diagnostics with safe fix guidance
   dev        start a confirmed development-theme upload
   sync       fetch refs and safely fast-forward the current branch
   pull       preview a remote-theme snapshot; optionally import new files
-  push       fail-closed until remote drift/recovery checks exist
+  push       guarded unpublished-theme upload; pass --baseline first
   preflight  release and protected-file checks
   lint       run Theme Check and configured project linters
   format     format changed theme files only
-  check      run read-only quality gates`);
+  check      run read-only quality gates
+
+Setup options:
+  --e2e             include Playwright and axe dependencies
+  --hooks           install a reversible local pre-commit hook
+  --uninstall-hooks remove only the hook created by ShopGuard`);
 
 function createPrompt(): (message: string, expected: string) => Promise<boolean> {
   return async (message, expected) => {
@@ -63,6 +72,26 @@ function rootFromArg(): string { return resolve(value('--path') ?? process.cwd()
 function projectRoot(): string { return findRoot(rootFromArg()); }
 function fail(message: string): never { throw new Error(message); }
 
+function ukrainianError(message: string): string {
+  const translations: Array<[string, string]> = [
+    ['No .shopguard/project.json found.', 'Не знайдено .shopguard/project.json.'],
+    ['Working tree is dirty;', 'Робоче дерево має локальні зміни;'],
+    ['Working tree has local changes.', 'У робочому дереві є локальні зміни.'],
+    ['No client Git repository/origin configured.', 'Git-репозиторій клієнта або origin не налаштовано.'],
+    ['No client origin configured', 'Origin клієнтського репозиторію не налаштовано'],
+    ['Store verification was not confirmed.', 'Перевірку магазину не підтверджено.'],
+    ['Development was not confirmed.', 'Розробку не підтверджено.'],
+    ['Shopify pull was not confirmed.', 'Завантаження теми Shopify не підтверджено.'],
+    ['Snapshot import was not confirmed.', 'Імпорт snapshot не підтверджено.'],
+    ['Remote preflight fetch was not confirmed.', 'Отримання даних для preflight не підтверджено.'],
+    ['Refusing development on a Live theme', 'Відхилено запуск розробки на Live-темі'],
+    ['No .shopguard/project.json found. Copy .shopguard/project.example.json and set the store domain.', 'Не знайдено .shopguard/project.json. Скопіюй .shopguard/project.example.json і вкажи домен магазину.'],
+  ];
+  for (const [english, ukrainian] of translations) if (message.startsWith(english)) return `${ukrainian}${message.slice(english.length)}`;
+  if (message.startsWith('Unknown command:')) return `Невідома команда:${message.slice('Unknown command:'.length)}`;
+  return `Помилка ShopGuard: ${message}`;
+}
+
 async function main(): Promise<void> {
   if (command === '--help' || command === '-h') return help();
   if (command === '--version' || command === '-v') return console.log('0.3.0');
@@ -70,7 +99,7 @@ async function main(): Promise<void> {
     const root = rootFromArg();
     const store = value('--store');
     if (!store) fail('configure requires --store <store.myshopify.com>');
-    const config = validateConfig({ store, mode: value('--mode') ?? 'existing', authAlias: value('--auth-alias'), productionBranch: value('--production-branch') ?? 'master', developmentBranch: value('--development-branch') ?? 'dev' });
+    const config = validateConfig({ store, mode: value('--mode') ?? 'existing', authAlias: value('--auth-alias'), themeId: value('--theme-id'), themeRole: value('--theme-role'), productionBranch: value('--production-branch') ?? 'master', developmentBranch: value('--development-branch') ?? 'dev', ...(has('--manual-unconnected') ? { github: { connected: false } } : {}) });
     mkdirSync(join(root, '.shopguard'), { recursive: true });
     saveConfig(root, config);
     console.log(`Created ${join(root, '.shopguard', 'project.json')} for ${config.store}. Review it, then run sgd init.`);
@@ -94,28 +123,44 @@ async function main(): Promise<void> {
   if (command === 'setup') {
     const root = projectRoot();
     const created = setupLocal(root);
-    console.log(created.length ? `Created:\n${created.map((file) => `- ${file}`).join('\n')}` : 'Setup is already up to date; no files changed.');
+    console.log(created.length ? `Створено конфігурацію:\n${created.map((file) => `- ${file}`).join('\n')}` : 'Конфігурація вже актуальна; файли не змінювалися.');
+    if (has('--hooks') || has('--uninstall-hooks')) {
+      const result = managePreCommitHook(root, has('--uninstall-hooks'));
+      console.log(result === 'installed' ? 'Встановлено локальний pre-commit hook.' : result === 'removed' ? 'Видалено pre-commit hook ShopGuard.' : 'Pre-commit hook без змін.');
+    }
+    const missing = missingSetupDependencies(root, has('--e2e'));
+    if (missing.length) {
+      const manager = packageManagerCommand(root);
+      const installCommand = `${manager.command} ${[...manager.installArgs, ...missing].join(' ')}`;
+      console.log(`Відсутні залежності: ${missing.join(', ')}\nКоманда встановлення: ${installCommand}`);
+      if (await createPrompt()(`ShopGuard виконає цю команду та оновить package.json і lockfile.`, `INSTALL ${missing.length}`)) {
+        const installed = run(manager.command, [...manager.installArgs, ...missing], root, true);
+        console.log(installed.output);
+        if (!installed.ok) fail('Не вдалося встановити залежності через npm. Перевір повідомлення вище.');
+      } else console.log(`Для ручного встановлення виконай: ${installCommand}`);
+    }
+    if (has('--e2e')) console.log('E2E запускаються лише за SHOPGUARD_PREVIEW_URL; без нього тести пропускаються. Встановлення браузера: npx playwright install chromium.');
     return;
   }
   if (command === 'status') {
-    const root = projectRoot(); const config = loadConfig(root); const git = gitState(root);
-    console.log(`Project: ${root}\nStore: ${config.store}\nLive baseline: ${config.liveThemeId ?? 'not imported'}\nBranch: ${git.branch}\nOrigin: ${git.remote || 'not configured'}\nStore access: unverified (run sgd doctor --verify-store)\nGitHub theme connection: ${config.github?.connected ? 'configured, not verified' : 'pending'}\nProduction integration: pending`);
+    const root = projectRoot(); const config = loadConfig(root); const { checks, git } = diagnoseProject(root);
+    const baseline = config.themeId && existsSync(join(root, '.shopguard', 'baselines', config.themeId, 'latest.json')) ? 'збережений' : 'не збережений';
+    const githubState = config.github?.connected === false ? 'позначено відключеним (не перевірено в Shopify Admin)' : config.github?.connected === true ? 'позначено підключеним' : 'не налаштовано';
+    console.log(`Проєкт: ${root}\nМагазин: ${config.store}\nДоступ до магазину: не перевірявся (sgd doctor --verify-store)\nLive theme ID: ${config.liveThemeId ?? 'ще не імпортовано'}\nЦіль завантаження: ${config.themeId ? `${config.themeId} (${config.themeRole ?? 'роль не підтверджена'})` : 'не налаштована'}\nBaseline цілі: ${baseline}\nГілка: ${git.branch}\nOrigin: ${git.remote || 'не налаштований'}\nРобоче дерево: ${git.dirty ? 'є локальні зміни' : 'чисте'}\nЗв’язок теми з GitHub: ${githubState}\n\nПеревірки:\n${checks.map((item) => `${item.ok ? '✓' : '✗'} ${item.label}: ${item.detail}${item.ok ? '' : ` — дія: ${item.fix}`}`).join('\n')}`);
     return;
   }
   if (command === 'doctor') {
     const root = rootFromArg();
-    for (const [tool, toolArgs] of [['node', ['--version']], ['git', ['--version']], ['shopify', ['version']]] as [string, string[]][]) {
-      const result = run(tool, toolArgs, root, true);
-      console.log(`${tool}: ${result.ok ? result.output.trim().split('\n')[0] : 'unavailable'}`);
-    }
-    try { const project = findRoot(root); const config = loadConfig(project); console.log(`Project: ${project}\nStore: ${config.store}\nTheme structure: ${isTheme(project) ? 'detected' : 'not detected'}`); }
-    catch { console.log('Project config: not initialized'); }
+    try {
+      const project = findRoot(root); const { checks } = diagnoseProject(project);
+      console.log(`Діагностика: ${project}\n${checks.map((item) => `${item.ok ? '✓' : '✗'} ${item.label}: ${item.detail}${item.ok ? '' : `\n  Як виправити: ${item.fix}`}`).join('\n')}`);
+    } catch (error) { console.log(`Конфігурацію ShopGuard не знайдено. ${error instanceof Error ? error.message : ''}\nДія: sgd configure --store <store>.myshopify.com`); }
     if (has('--verify-store')) {
       const project = findRoot(root); const config = loadConfig(project);
-      if (!await createPrompt()(`This sends a read-only theme list request to ${config.store}.`, `LIST ${config.store}`)) fail('Store verification was not confirmed.');
+      if (!await createPrompt()(`Буде надіслано read-only запит списку тем до ${config.store}.`, `LIST ${config.store}`)) fail('Перевірку магазину не підтверджено.');
       const result = run('shopify', shopifyCommandArgs(config, ['theme', 'list', '--json', '--path', project]), project, true);
-      if (!result.ok) fail(`Store access not verified for ${config.store}. Sign in manually; ShopGuard did not log out.`);
-      const themes = parseThemeList(result.output, config.store); console.log(`Store access verified for ${config.store}; ${themes.length} themes returned.`);
+      if (!result.ok) fail(`Не вдалося перевірити доступ до ${config.store}. Увійди вручну; ShopGuard не виконував вихід з акаунту.`);
+      const themes = parseThemeList(result.output, config.store); console.log(`Доступ підтверджено для ${config.store}; отримано тем: ${themes.length}.`);
     }
     return;
   }
@@ -191,9 +236,16 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'push') {
-    const root = projectRoot(); const config = loadConfig(root); const git = gitState(root);
-    guardPush(config, git.remote, config.themeRole === 'live');
-    fail('Shopify theme upload is disabled until target role and remote baseline verification are implemented.');
+    const root = projectRoot(); const config = loadConfig(root);
+    const dependencies = { run: (bin: string, binArgs: string[], cwd: string) => run(bin, binArgs, cwd, true), prompt: createPrompt(), output: console.log };
+    if (has('--baseline')) {
+      await pushThemeBaseline(root, config, dependencies);
+      return;
+    }
+    const selected = value('--files')?.split(',').map((file) => file.trim()).filter(Boolean);
+    const uploaded = await pushTheme(root, config, selected, dependencies);
+    console.log(`Verified upload: ${uploaded.join(', ')}`);
+    return;
   }
   if (command === 'preflight') {
     const root = projectRoot(); const config = loadConfig(root);
@@ -245,7 +297,7 @@ async function main(): Promise<void> {
   }
   if (command === 'format') {
     const root = projectRoot();
-    const files = changedThemeFiles(root);
+    const files = changedThemeFiles(root, undefined, has('--staged'));
     if (!files.length) { console.log('No changed theme files to format.'); return; }
     const forwarded = value('--files')?.split(',').map((file) => file.trim()).filter(Boolean);
     const selected = forwarded?.length ? files.filter((file) => forwarded.includes(file)) : files;
@@ -265,6 +317,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(`sgd: ${error instanceof Error ? error.message : 'Unexpected error'}`);
+  console.error(ukrainianError(error instanceof Error ? error.message : 'Невідома помилка'));
   process.exitCode = 1;
 });

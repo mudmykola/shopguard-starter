@@ -1,5 +1,7 @@
 node_modules/
 dist/
+test-results/
+playwright-report/
 .env*
 !.env.example
 .idea/
@@ -13,6 +15,7 @@ dist/
 .shopguard/session/
 .shopguard/init-state.json
 .shopguard/backups/
+.shopguard/baselines/
 .shopguard/cache/
 .shopguard/snapshots/
 docs/backlog.md

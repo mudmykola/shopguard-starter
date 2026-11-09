@@ -1,44 +1,81 @@
-# ShopGuard Private Starter
+# ShopGuard Starter
 
-Private-first Shopify theme workflow CLI. Source, tests, package metadata and generated CLI live at this repository root; there is no nested `shopguard-cli` folder. The package is private and must not be published.
+Приватний стартовий проєкт для розробки тем Shopify. Він допомагає під’єднати робочу копію до потрібного магазину, перевіряти зміни й завантажувати їх у вибрану тему з підтвердженням.
 
-## Requirements
+Усі файли CLI, тести й налаштування лежать у корені цього репозиторію. Окремої вкладеної папки `shopguard-cli` немає. npm-пакет позначений як приватний — **не публікуйте його**.
 
-- Node.js 22 or newer
+## Що потрібно
+
+- Node.js 22 або новіший
 - Git
-- Shopify CLI 4.x or newer, logged into the intended store
-- A separate private GitHub repository for each client project (HTTPS)
+- Shopify CLI 4 або новіший — для команд, що звертаються до Shopify
+- Приватний GitHub-репозиторій для кожного проєкту магазину; використовуйте HTTPS
+- VS Code — рекомендовано, з розширенням Shopify Liquid
 
-## Start a client project
+## Створити робочий проєкт
 
-For each client, use GitHub's **Use this template** action to create a separate private client repository, then clone that repository over HTTPS. Do not directly clone this starter as the client repo: ShopGuard intentionally blocks the starter's origin. The template creates independent client Git history.
+1. У GitHub виберіть **Use this template** і створіть окремий приватний репозиторій для теми клієнта.
+2. Клонуйте новий репозиторій. Не працюйте безпосередньо в клоні `shopguard-starter`.
+3. Установіть залежності й CLI:
 
 ```bash
 git clone https://github.com/OWNER/CLIENT-REPO.git
 cd CLIENT-REPO
-npm install
+npm ci
 npm run check
 npm link
-sgd configure --store client.myshopify.com
 ```
 
-Review `.shopguard/project.json` (it is ignored by Git), then run the guided baseline import:
+4. Укажіть домен магазину. Використовуйте адресу `назва-магазину.myshopify.com`, без `https://`:
+
+```bash
+sgd configure --store назва-магазину.myshopify.com
+```
+
+Налаштування збережеться в `.shopguard/project.json`. Файл ігнорується Git. Перевірте його, а потім запустіть початкове налаштування:
 
 ```bash
 sgd init
 ```
 
-For an existing shop, `init` checks the exact configured store, asks you to confirm a Live theme by ID, pulls it into a temporary isolated folder, and previews additions/conflicts. It imports only new files after a second typed confirmation, creates a local `master` baseline, creates `dev` at the same commit, and finishes on `dev`. It never uploads to Shopify or pushes to GitHub. Existing files and branches are preserved.
+Для доступу до магазину заздалегідь увійдіть у Shopify CLI саме під потрібним обліковим записом.
 
-For a new theme, configure it with `sgd configure --store client.myshopify.com --mode new`. `init` downloads Shopify's default skeleton to a temporary folder and imports only new files after preview. It does not connect to or change the configured store.
+### Якщо створюєте нову тему
 
-`sgd setup` adds local configuration files without replacing existing ones. It does not rewrite `package.json` or install dependencies. To enable optional project-local formatting and linting, install the tools your project uses, for example:
+Для нового магазину ShopGuard може завантажити початковий шаблон Shopify локально:
 
 ```bash
-npm install --save-dev eslint prettier @shopify/prettier-plugin-liquid stylelint
+sgd configure --store назва-магазину.myshopify.com --mode new
+sgd init
 ```
 
-## Day-to-day commands
+У цьому режимі `init` не звертається до магазину: він завантажує skeleton у тимчасову папку, показує список нових файлів і копіює їх після підтвердження.
+
+### Якщо магазин уже має тему
+
+`sgd init` запитує список тем у вказаному магазині, просить підтвердити Live-тему, завантажує її файли в окрему тимчасову папку й показує план імпорту. Наявні локальні файли не перезаписуються. Після підтвердження ShopGuard створює локальну гілку `master` з базовим знімком і гілку `dev`, а потім переходить на `dev`.
+
+Початкове завантаження **не завантажує файли в Shopify і не надсилає їх у GitHub**.
+
+## Налаштувати інструменти
+
+```bash
+sgd setup
+```
+
+Команда додає відсутні конфіги якості коду, налаштування VS Code і workflow GitHub Actions для Shopify Theme Check. Існуючі файли не перезаписуються. Якщо бракує пакетів, ShopGuard покаже команду встановлення й попросить підтвердження. Він визначає менеджер пакетів за lock-файлом або полем `packageManager` у `package.json`; якщо вибір неоднозначний, спершу вкажіть менеджер явно.
+
+Додаткові опції:
+
+```bash
+sgd setup --hooks             # встановити локальний pre-commit hook
+sgd setup --uninstall-hooks   # видалити лише hook, створений ShopGuard
+sgd setup --e2e               # додати залежності Playwright та axe
+```
+
+Hook запускає перевірку форматування staged-файлів і `sgd check`. Він не перезаписує наявний hook і відмовляється працювати з налаштованим `core.hooksPath`.
+
+## Щоденна робота
 
 ```bash
 sgd status
@@ -50,17 +87,92 @@ sgd pull --preview
 sgd preflight --fetch
 ```
 
-- `dev` verifies the configured store and requires typing `DEV <store>` before Shopify CLI starts a development theme upload.
-- `sync --check` requires confirmation before `git fetch --prune origin`, then reports local/remote divergence for current, production, and development branches. Plain `sync` only fast-forwards the current clean branch; it refuses divergent history.
-- `pull --preview` downloads the configured or specified theme to `.shopguard/snapshots/`, an ignored directory. `sgd pull --theme <id> --files sections/example.liquid` allows a reviewed import of selected **new** files; conflicts and merchant-managed settings JSON cannot be overwritten.
-- `preflight` reports local changes and changed protected merchant JSON. Add `--fetch` to confirm a remote Git fetch, compare production/development divergence and flag remote customizer JSON changes. It does not merge or deploy.
-- `lint` runs Shopify Theme Check and ESLint/Stylelint where the project has the relevant configuration and dependencies. `format` operates only on changed files and supports `--check` and `--files`.
-- `push` currently fails closed. A safe manual theme upload needs fresh remote-baseline comparison, recovery and post-upload verification; it is not implemented.
+| Команда | Що робить |
+| --- | --- |
+| `sgd status` | Показує магазин, налаштовану ціль, baseline, гілку Git, `origin`, локальні зміни та стан інструментів. Для проблем виводить наступну дію. |
+| `sgd doctor` | Перевіряє конфігурацію, структуру теми, Git, Node.js, Shopify CLI та залежності. Дає підказки з виправлення. |
+| `sgd doctor --verify-store` | Після окремого підтвердження надсилає до магазину лише запит списку тем. |
+| `sgd setup` | Безпечно додає відсутні налаштування для розробки. |
+| `sgd check` | Перевіряє структуру теми, конфігурацію та доступні лінтери; для теми також запускає Theme Check. |
+| `sgd format` | Форматує змінені підтримувані файли теми. Захищені JSON-файли пропускаються. |
+| `sgd format --check` | Перевіряє форматування, не змінюючи файли. |
+| `sgd dev` | Після перевірки магазину й підтвердження запускає Shopify CLI для розробки. Shopify CLI може завантажувати зміни в dev-тему. |
+| `sgd sync --check` | Після підтвердження отримує Git refs і показує відставання/випередження гілок. |
+| `sgd sync` | Працює лише з чистим робочим деревом; може виконати тільки безпечний fast-forward поточної гілки. При розходженні зупиняється. |
+| `sgd pull --preview` | Завантажує вибрану Shopify-тему в `.shopguard/snapshots/` і показує, що можна імпортувати. |
+| `sgd preflight --fetch` | Після підтвердження виконує Git fetch і перевіряє гілки та зміни в захищених JSON-файлах. Не зливає гілки й не розгортає тему. |
 
-## GitHub HTTPS
+### Імпортувати вибрані файли
 
-Keep the client repository private. Sign in with GitHub CLI using HTTPS and create/select the client repository yourself. Never put tokens in `.shopguard/project.json`, remote URLs, shell history or logs. Follow [GitHub HTTPS setup](docs/github-https.md). Keeper SSH Agent is not required.
+Після перегляду snapshot можна додати лише нові файли. Існуючі файли не перезаписуються:
 
-## Verification and boundaries
+```bash
+sgd pull --theme THEME_ID --files sections/example.liquid,snippets/example.liquid
+```
 
-Run `npm run check` for typecheck, ESLint and offline automated tests. CI uses fixtures only and has read-only GitHub permissions. Shopify authentication, remote Git fetch, development-theme upload, client repository selection/push, theme GitHub integration and production publishing require the operator to run the corresponding step and confirm its target. ShopGuard does not create repositories, publish packages, or publish a theme.
+### Перевірити стиль коду
+
+`sgd setup` створює EditorConfig із двома пробілами, UTF-8, LF і фінальним переносом рядка. Для змін у Shopify-темі дотримуйтеся простих правил:
+
+- Рендерте основний вміст через Liquid і HTML; JavaScript додавайте для потрібної взаємодії.
+- Тримайте код секції, налаштування й стилі поруч; повторно використовувані частини оформлюйте як snippets.
+- Для зображень використовуйте `image_url` та `image_tag`; не відкладайте завантаження головного видимого зображення.
+- Обмежуйте глобальні CSS-селектори й непотрібні сторонні скрипти.
+- Використовуйте семантичні HTML-елементи, доступні підписи, видимий фокус клавіатури та змістовний alt-текст.
+- Текст для покупців зберігайте в locale-файлах і виводьте через фільтр `t`.
+- Не перезаписуйте навмання `config/settings_data.json`, JSON-шаблони й section-group JSON: це дані, якими може керувати власник магазину.
+
+Офіційні довідники Shopify: [Theme Check](https://shopify.dev/docs/storefronts/themes/tools/theme-check), [продуктивність тем](https://shopify.dev/docs/storefronts/themes/best-practices/performance) та [доступність тем](https://shopify.dev/docs/storefronts/themes/best-practices/accessibility). Для пошуку повільних Liquid-ділянок використовуйте [Theme Inspector](https://shopify.dev/docs/storefronts/themes/tools/theme-inspector).
+
+## Перевірити тему в браузері
+
+У репозиторії є Playwright-тести з axe. Вони перевіряють наявність основного вмісту, доступність клавіатури, горизонтальне переповнення на мобільній, планшетній і десктопній ширині, а також WCAG-порушення.
+
+Спочатку відкрийте preview потрібної теми й передайте її URL. Браузерні тести нічого не надсилають у магазин і без URL пропускаються:
+
+```bash
+npx playwright install chromium
+SHOPGUARD_PREVIEW_URL="https://preview-url" npm run test:e2e
+```
+
+За потреби задайте сторінки через змінну `SHOPGUARD_PREVIEW_PATHS` — список шляхів через кому, наприклад `/, /products/example, /cart`:
+
+```bash
+SHOPGUARD_PREVIEW_URL="https://preview-url" \
+SHOPGUARD_PREVIEW_PATHS="/,/products/example,/cart" \
+npm run test:e2e
+```
+
+ShopGuard не створює preview і не входить у Shopify за вас. Переконайтеся, що preview URL доступний у браузері, де запускаються тести.
+
+## Завантаження змін у Shopify
+
+`sgd dev` призначений для роботи з dev-темою. Перед запуском CLI перевіряє список тем і показує магазин та команду. Для продовження потрібно вручну ввести підтвердження.
+
+Ручна команда `sgd push` доступна лише для явно налаштованої **unpublished-теми, не підключеної до GitHub**. Спочатку перевірте ID і роль теми в Shopify Admin, потім збережіть відповідні значення у локальному `.shopguard/project.json`. Позначку `github.connected: false` встановлюйте лише після власної перевірки: ShopGuard не може прочитати цей стан із Shopify Admin.
+
+```bash
+sgd push --baseline
+sgd push --files assets/theme.css,snippets/example.liquid
+```
+
+Перед завантаженням ShopGuard повторно перевіряє магазин і роль теми, порівнює файли з baseline, зберігає recovery snapshot, запускає Theme Check і просить підтвердження. Завантажуються лише вибрані файли; Live-тема, GitHub-підключена тема, видалення та захищений JSON блокуються. Команда не публікує тему й не виконує автоматичний rollback.
+
+Якщо тема керується через GitHub, використовуйте налаштований GitHub workflow для цієї теми; не запускайте `sgd push`.
+
+## Приватність і безпечна робота
+
+- Зберігайте starter і репозиторії клієнтів приватними.
+- Для роботи з GitHub використовуйте HTTPS. Keeper SSH Agent не потрібен.
+- Не зберігайте токени чи паролі в репозиторії, `.shopguard/project.json`, Git remote або командному рядку.
+- Не комітьте локальні налаштування магазину, авторизацію, snapshots і baseline.
+- Перевіряйте ціль і список файлів перед кожною дією, що звертається до Shopify або GitHub.
+- ShopGuard не створює GitHub-репозиторії, не надсилає коміти, не публікує npm-пакет і не публікує Shopify-теми.
+
+## Перевірки репозиторію
+
+```bash
+npm run check
+```
+
+Це запускає TypeScript-перевірку, ESLint і офлайн-тести CLI; Playwright-тести пропускаються, якщо не задано `SHOPGUARD_PREVIEW_URL`. Ця команда перевіряє сам ShopGuard, а не тему клієнта. Для теми використовуйте `sgd check` або `npm run lint:theme`.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -9,8 +9,9 @@ import {
   changedThemeFiles, checkProject, findLiveTheme, guardClientRepository, guardPush, importNewFiles,
   parseThemeList, planThemeImport, preflight, protectedFiles, pullArgs,
   run, safeEnvironment, setupLocal, shopifyCommandArgs, validateConfig,
-  verifyThemeStructure, remotePreflight,
+  verifyThemeStructure, remotePreflight, managePreCommitHook, missingSetupDependencies, packageManagerCommand,
 } from '../dist/core.js';
+import { pushTheme, pushThemeBaseline } from '../dist/push.js';
 
 const storeA = 'alpha.myshopify.com';
 const storeB = 'beta.myshopify.com';
@@ -29,7 +30,7 @@ function clientRepo() {
   const root = tempDir();
   mkdirSync(join(root, '.shopguard'));
   writeFileSync(join(root, '.shopguard/project.json'), `${JSON.stringify(config())}\n`);
-  writeFileSync(join(root, '.gitignore'), '.shopguard/project.json\n.shopguard/init-state.json\n.shopguard/snapshots/\n');
+  writeFileSync(join(root, '.gitignore'), '.shopguard/project.json\n.shopguard/init-state.json\n.shopguard/snapshots/\n.shopguard/backups/\n.shopguard/baselines/\n');
   git(root, ['init', '--initial-branch', 'main']);
   git(root, ['config', 'user.name', 'ShopGuard Test']);
   git(root, ['config', 'user.email', 'shopguard-test@example.invalid']);
@@ -38,6 +39,60 @@ function clientRepo() {
   git(root, ['commit', '-m', 'template baseline']);
   git(root, ['remote', 'add', 'origin', 'https://github.com/example-owner/client-theme.git']);
   return root;
+}
+function stagingRepo() {
+  const root = clientRepo(); const remote = tempDir();
+  git(root, ['switch', '-c', 'dev']);
+  for (const folder of ['layout', 'sections', 'snippets', 'templates', 'config', 'assets']) mkdirSync(join(remote, folder), { recursive: true });
+  writeFileSync(join(remote, 'layout/theme.liquid'), '<html>{{ content_for_header }}{{ content_for_layout }}</html>');
+  writeFileSync(join(remote, 'assets/theme.css'), 'body { color: black; }');
+  writeFileSync(join(remote, 'config/settings_data.json'), '{"current":"merchant"}');
+  writeFileSync(join(remote, 'templates/index.json'), '{"sections":{}}');
+  cpSync(remote, root, { recursive: true });
+  git(root, ['add', 'layout', 'sections', 'snippets', 'templates', 'config', 'assets']);
+  git(root, ['commit', '-m', 'chore(theme): staging baseline']);
+  const stagingConfig = validateConfig({ ...config(), themeId: '456', themeRole: 'unpublished', github: { connected: false } });
+  writeFileSync(join(root, '.shopguard/project.json'), `${JSON.stringify(stagingConfig)}\n`);
+  writeFileSync(join(root, 'assets/theme.css'), 'body { color: navy; }');
+  return { root, remote, stagingConfig };
+}
+function fakeStagingShopify(root, remote, { decline = false, driftAfterReview = false } = {}) {
+  const calls = []; const prompts = [];
+  const runner = (command, args, cwd) => {
+    calls.push({ command, args, cwd });
+    if (command === 'git') return run(command, args, cwd, true);
+    if (command !== 'shopify') return { ok: false, output: 'unexpected command', command };
+    if (args[1] === 'list') return { ok: true, output: JSON.stringify([
+      { id: '123', name: 'Live', role: 'main', shop: 'alpha.myshopify.com' },
+      { id: '456', name: 'Staging', role: 'unpublished', shop: 'alpha.myshopify.com' },
+    ]), command: 'shopify theme list' };
+    if (args[1] === 'pull') {
+      const destination = args[args.indexOf('--path') + 1];
+      rmSync(destination, { recursive: true, force: true });
+      cpSync(remote, destination, { recursive: true });
+      return { ok: true, output: '', command: 'shopify theme pull' };
+    }
+    if (args[1] === 'check') return { ok: true, output: 'Theme Check passed', command: 'shopify theme check' };
+    if (args[1] === 'push') {
+      for (let index = 0; index < args.length; index += 1) {
+        if (args[index] === '--only') {
+          const file = args[index + 1]; mkdirSync(join(remote, file, '..'), { recursive: true }); cpSync(join(root, file), join(remote, file));
+        }
+      }
+      return { ok: true, output: '{"theme":{"id":456,"role":"unpublished"}}', command: 'shopify theme push' };
+    }
+    return { ok: false, output: `unexpected Shopify command ${args.join(' ')}`, command: 'shopify' };
+  };
+  return {
+    calls, prompts,
+    run: runner,
+    prompt: async (_message, expected) => {
+      prompts.push(expected);
+      if (driftAfterReview && expected.startsWith('PUSH ')) writeFileSync(join(remote, 'assets/theme.css'), 'body { color: maroon; }');
+      return !decline;
+    },
+    output() {},
+  };
 }
 function fakeWorkflow({ output = liveThemes(), failList = false, promptResults = [true, true, true, true, true], pullTree = true } = {}) {
   const calls = [];
@@ -265,7 +320,110 @@ test('29. Remote preflight reports ahead/behind and protected Shopify-originated
     assert.deepEqual(result.issues, []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+test('30. Manual push captures a baseline, uploads selected staging files, and verifies before advancing baseline', async () => {
+  const { root, remote, stagingConfig } = stagingRepo(); const deps = fakeStagingShopify(root, remote);
+  try {
+    await pushThemeBaseline(root, stagingConfig, deps);
+    const uploaded = await pushTheme(root, stagingConfig, undefined, deps);
+    assert.deepEqual(uploaded, ['assets/theme.css']);
+    assert.equal(readFileSync(join(remote, 'assets/theme.css'), 'utf8'), 'body { color: navy; }');
+    assert.equal(readFileSync(join(remote, 'config/settings_data.json'), 'utf8'), '{"current":"merchant"}');
+    const command = deps.calls.find((call) => call.command === 'shopify' && call.args[1] === 'push');
+    assert.ok(command.args.includes('--theme') && command.args.includes('456'));
+    assert.ok(command.args.includes('--nodelete') && command.args.includes('--only') && command.args.includes('assets/theme.css'));
+    assert.equal(command.args.includes('--allow-live'), false); assert.equal(command.args.includes('--publish'), false);
+    assert.deepEqual(deps.prompts, [`BASELINE ${storeA} 456`, `PUSH ${storeA} 456 1`]);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(remote, { recursive: true, force: true }); }
+});
+test('31. Manual push stops on selected remote drift before upload', async () => {
+  const { root, remote, stagingConfig } = stagingRepo(); const deps = fakeStagingShopify(root, remote);
+  try {
+    await pushThemeBaseline(root, stagingConfig, deps);
+    writeFileSync(join(remote, 'assets/theme.css'), 'body { color: maroon; }');
+    await assert.rejects(pushTheme(root, stagingConfig, undefined, deps), /Remote drift conflicts/);
+    assert.equal(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'push'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(remote, { recursive: true, force: true }); }
+});
+test('32. Manual push stops if the target changes during confirmation', async () => {
+  const { root, remote, stagingConfig } = stagingRepo(); const deps = fakeStagingShopify(root, remote, { driftAfterReview: true });
+  try {
+    await pushThemeBaseline(root, stagingConfig, deps);
+    await assert.rejects(pushTheme(root, stagingConfig, undefined, deps), /changed after review/);
+    assert.equal(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'push'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(remote, { recursive: true, force: true }); }
+});
+test('33. Manual push refuses missing explicit unconnected confirmation and protected JSON', async () => {
+  const { root, remote, stagingConfig } = stagingRepo(); const deps = fakeStagingShopify(root, remote);
+  try {
+    await pushThemeBaseline(root, stagingConfig, deps);
+    const unknown = validateConfig({ ...stagingConfig, github: undefined });
+    await assert.rejects(pushTheme(root, unknown, undefined, deps), /github.connected=false/);
+    writeFileSync(join(root, 'config/settings_data.json'), '{"current":"local-edit"}');
+    await assert.rejects(pushTheme(root, stagingConfig, ['config/settings_data.json'], deps), /cannot be protected/);
+    assert.equal(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'push'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(remote, { recursive: true, force: true }); }
+});
+test('34. Manual push refuses a newly Live target and a declined upload', async () => {
+  const { root, remote, stagingConfig } = stagingRepo(); const deps = fakeStagingShopify(root, remote);
+  try {
+    await pushThemeBaseline(root, stagingConfig, deps);
+    const live = validateConfig({ ...stagingConfig, themeId: '123' });
+    await assert.rejects(pushThemeBaseline(root, live, deps), /configured target is Live/);
+    const declined = fakeStagingShopify(root, remote, { decline: true });
+    await assert.rejects(pushTheme(root, stagingConfig, undefined, declined), /Upload declined/);
+    assert.equal(declined.calls.some((call) => call.command === 'shopify' && call.args[1] === 'push'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(remote, { recursive: true, force: true }); }
+});
 test('27. CI is offline and does not have deploy permissions', () => {
   const workflow = readFileSync(new URL('../.github/workflows/check.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /contents: read/); assert.match(workflow, /npm test/); assert.doesNotMatch(workflow, /shopify theme push|npm publish|contents: write/);
+  assert.match(workflow, /contents: read/); assert.match(workflow, /npm run lint/); assert.match(workflow, /npm test/); assert.match(workflow, /npm run test:e2e/); assert.doesNotMatch(workflow, /shopify theme push|npm publish|contents: write/);
+});
+test('35. setup adds shared VS Code and Theme Check defaults without overwriting existing files', () => {
+  const root = tempDir();
+  try {
+    mkdirSync(join(root, '.vscode'), { recursive: true });
+    writeFileSync(join(root, '.vscode/settings.json'), '{"custom":true}\n');
+    const first = setupLocal(root);
+    const second = setupLocal(root);
+    assert.ok(first.includes('.vscode/extensions.json'));
+    assert.ok(first.includes('.github/workflows/theme-check.yml'));
+    assert.equal(readFileSync(join(root, '.vscode/settings.json'), 'utf8'), '{"custom":true}\n');
+    assert.deepEqual(second, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('36. setup detects only missing tooling and optional browser dependencies', () => {
+  const root = tempDir();
+  try {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ devDependencies: { eslint: '^9', prettier: '^3' } }));
+    const baseMissing = missingSetupDependencies(root);
+    assert.ok(baseMissing.includes('stylelint'));
+    assert.ok(!baseMissing.includes('eslint'));
+    assert.ok(missingSetupDependencies(root, true).includes('@playwright/test'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('37. local pre-commit hook is reversible, idempotent, and preserves existing hooks', () => {
+  const root = tempDir();
+  try {
+    git(root, ['init', '--initial-branch', 'main']);
+    assert.equal(managePreCommitHook(root), 'installed');
+    assert.equal(managePreCommitHook(root), 'unchanged');
+    const hook = join(root, '.git/hooks/pre-commit');
+    assert.match(readFileSync(hook, 'utf8'), /sgd format --check --staged/);
+    assert.equal(managePreCommitHook(root, true), 'removed');
+    writeFileSync(hook, '#!/bin/sh\necho custom\n', { mode: 0o755 });
+    assert.throws(() => managePreCommitHook(root), /left untouched/);
+    assert.throws(() => managePreCommitHook(root, true), /left untouched/);
+    assert.match(readFileSync(hook, 'utf8'), /custom/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('38. setup follows the repository package manager and stops on ambiguous lockfiles', () => {
+  const root = tempDir();
+  try {
+    writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    assert.deepEqual(packageManagerCommand(root), { command: 'pnpm', installArgs: ['add', '--save-dev'] });
+    writeFileSync(join(root, 'yarn.lock'), '');
+    assert.throws(() => packageManagerCommand(root), /Several package-manager lockfiles/);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'yarn@4.0.0' }));
+    assert.deepEqual(packageManagerCommand(root), { command: 'yarn', installArgs: ['add', '--dev'] });
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

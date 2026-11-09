@@ -12,4 +12,20 @@ Switched the documented private GitHub workflow to HTTPS per owner direction. Ke
 
 ## 2026-11-09 — Feature
 
-Implemented config-driven existing/new theme bootstrap, isolated downloads, reviewed additive imports, private per-client config, local master/dev baseline, guarded development upload, HTTPS Git fetch/fast-forward, selective pull snapshots, changed-file format selection, local/remote protected JSON preflight, and CI lint coverage. Added 30 offline tests. No real store, GitHub remote, or publishing action was run. Issue #1 remains In Progress: manual staging push is fail-closed until fresh role, drift, recovery and post-upload verification exist. Module: CLI/core. Issue: #1.
+Implemented config-driven existing/new theme bootstrap, isolated downloads, reviewed additive imports, private per-client config, local master/dev baseline, guarded development upload, HTTPS Git fetch/fast-forward, selective pull snapshots, changed-file format selection, local/remote protected JSON preflight, and CI lint coverage. Added 30 offline tests. No real store, GitHub remote, or publishing action was run. Module: CLI/core. Issue: #1.
+
+## 2026-11-09 — Feature
+
+Implemented manual push to an explicitly configured unpublished, non-GitHub-connected theme: operator-confirmed baseline snapshots, selected-file-only upload, protected JSON/deletion exclusion, per-file remote drift checks, immediate recheck before upload, Shopify Theme Check, `--nodelete`, post-upload pull verification and retained recovery snapshots. Added offline tests for success, Live refusal, protected files, declined confirmation, remote drift and verification boundaries. Full validation passes: 35 offline tests, typecheck, ESLint, build, package dry-run. No real Shopify upload was executed. Issue #1 complete; Project #6 set to Done. Module: CLI/push. Issue: #1.
+
+## 2026-11-09 10:38 — Improvement
+
+Title: Shopify theme code-quality workflow in README. Reworked setup and day-to-day commands, distinguished CLI package checks from storefront Theme Check, documented Liquid, performance, accessibility and merchant-data practices, and added prioritized VS Code, CI, pre-commit, browser-test and performance-tool recommendations. Module: Documentation/README. Issue: #2.
+
+## 2026-11-09 11:25 — Feature
+
+Title: One-command Shopify theme developer workflow. `sgd setup` now adds missing quality configuration, VS Code defaults and a client Theme Check workflow without replacing existing files; it detects the repository package manager and asks before dependency installation. Added reversible pre-commit hooks, actionable `status`/`doctor` diagnostics, Ukrainian setup/store errors, and read-only opt-in Playwright + axe preview checks for semantics, keyboard focus, responsive overflow and WCAG. Updated CI, README and offline coverage. Validation: `npm run check` passes (39 unit tests); three E2E tests are skipped because no preview URL was configured. No Shopify store or remote Git action was run. Module: CLI/core. Issue: #3.
+
+## 2026-11-09 11:58 — Improvement
+
+Title: README rewritten in Ukrainian. Replaced the English guide with a step-by-step explanation of creating a private client repository, configuring and initializing a store project, running daily checks, using optional hooks and browser tests, and understanding Shopify/Git safety boundaries. Verified commands against `src/cli.ts`; `git diff --check` passes. No store, Git remote, commit, or package publishing action was performed. Module: Documentation/README. Issue: #4.

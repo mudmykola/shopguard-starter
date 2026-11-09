@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -48,6 +49,9 @@ export function validateConfig(input: unknown): ProjectConfig {
   }
   if (data.themeRole !== undefined && !['live', 'unpublished', 'development'].includes(String(data.themeRole))) {
     throw new Error('Invalid themeRole');
+  }
+  if (data.themeId !== undefined && (typeof data.themeId !== 'string' || !/^\d+$/.test(data.themeId))) {
+    throw new Error('themeId must be a numeric Shopify theme ID');
   }
   return {
     store: data.store,
@@ -224,7 +228,7 @@ export function isTheme(root: string): boolean {
 
 export function setupLocal(root: string): string[] {
   const files: Record<string, string> = {
-    '.gitignore': '.env*\n!.env.example\nnode_modules/\ndist/\n.shopguard/project.json\n.shopguard/auth/\n.shopguard/session/\n.shopguard/backups/\n.shopguard/cache/\n.shopguard/snapshots/\n.shopguard/init-state.json\n*.pem\n*.key\n*.p12\n*.pfx\n',
+    '.gitignore': '.env*\n!.env.example\nnode_modules/\ndist/\n.shopguard/project.json\n.shopguard/auth/\n.shopguard/session/\n.shopguard/backups/\n.shopguard/baselines/\n.shopguard/cache/\n.shopguard/snapshots/\n.shopguard/init-state.json\n*.pem\n*.key\n*.p12\n*.pfx\n',
     '.editorconfig': 'root = true\n[*]\ncharset = utf-8\nindent_style = space\nindent_size = 2\nend_of_line = lf\ninsert_final_newline = true\n',
     '.prettierignore': 'node_modules\ndist\n.shopguard/backups\n.shopguard/cache\nassets/vendor\n',
     '.stylelintignore': 'node_modules\ndist\nassets/vendor\n',
@@ -232,16 +236,97 @@ export function setupLocal(root: string): string[] {
     'prettier.config.mjs': "export default { singleQuote: true, plugins: ['@shopify/prettier-plugin-liquid'] };\n",
     'eslint.config.mjs': "export default [{ ignores: ['dist/**', 'node_modules/**', 'assets/vendor/**', '.shopguard/**'] }, { files: ['**/*.{js,mjs,cjs}'], rules: { 'no-debugger': 'error', 'no-unreachable': 'error', 'no-duplicate-imports': 'error' } }];\n",
     'stylelint.config.mjs': "export default { ignoreFiles: ['assets/vendor/**', 'dist/**', 'node_modules/**'], rules: { 'color-no-invalid-hex': true, 'declaration-block-no-duplicate-properties': true } };\n",
+    '.vscode/extensions.json': `${JSON.stringify({ recommendations: ['Shopify.theme-check-vscode', 'EditorConfig.EditorConfig', 'esbenp.prettier-vscode'] }, null, 2)}\n`,
+    '.vscode/settings.json': `${JSON.stringify({ 'editor.tabSize': 2, 'editor.insertSpaces': true, 'editor.formatOnSave': true, 'editor.defaultFormatter': 'esbenp.prettier-vscode', 'files.associations': { '*.liquid': 'liquid' }, '[liquid]': { 'editor.defaultFormatter': 'Shopify.theme-check-vscode' } }, null, 2)}\n`,
+    '.github/workflows/theme-check.yml': "name: Shopify Theme Check\n\non:\n  pull_request:\n  push:\n    branches: [master, dev]\n\npermissions:\n  contents: read\n\njobs:\n  theme-check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - run: npm install --global @shopify/cli@latest\n      - run: shopify theme check --path . --no-input\n",
   };
   const created: string[] = [];
   for (const [file, content] of Object.entries(files)) {
     const target = join(root, file);
     if (!existsSync(target)) {
+      mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, content);
       created.push(file);
     }
   }
   return created;
+}
+
+export const PRE_COMMIT_HOOK = '#!/bin/sh\n# shopguard-managed-pre-commit-v1\nset -eu\nsgd format --check --staged\nsgd check\n';
+
+export function managePreCommitHook(root: string, remove = false): 'installed' | 'removed' | 'unchanged' {
+  const gitPath = run('git', ['rev-parse', '--git-path', 'hooks/pre-commit'], root, true);
+  if (!gitPath.ok) throw new Error('Git hooks need an initialized repository.');
+  const customPath = run('git', ['config', '--get', 'core.hooksPath'], root, true);
+  if (customPath.ok && customPath.output.trim()) throw new Error('core.hooksPath is customized; existing hooks were left untouched.');
+  const hookPath = resolve(root, gitPath.output.trim());
+  if (remove) {
+    if (!existsSync(hookPath)) return 'unchanged';
+    const existing = readFileSync(hookPath, 'utf8');
+    if (!existing.startsWith('#!/bin/sh\n# shopguard-managed-pre-commit-v1')) throw new Error('Existing pre-commit hook is not managed by ShopGuard; it was left untouched.');
+    unlinkSync(hookPath);
+    return 'removed';
+  }
+  if (existsSync(hookPath)) {
+    if (readFileSync(hookPath, 'utf8').startsWith('#!/bin/sh\n# shopguard-managed-pre-commit-v1')) return 'unchanged';
+    throw new Error('An existing pre-commit hook was found; it was left untouched.');
+  }
+  writeFileSync(hookPath, PRE_COMMIT_HOOK, { mode: 0o755, flag: 'wx' });
+  return 'installed';
+}
+
+export function missingSetupDependencies(root: string, includeE2e = false): string[] {
+  const packagePath = join(root, 'package.json');
+  if (!existsSync(packagePath)) return [];
+  const project = JSON.parse(readFileSync(packagePath, 'utf8')) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  const known = { ...project.dependencies, ...project.devDependencies };
+  const required = ['eslint', '@eslint/js', 'prettier', '@shopify/prettier-plugin-liquid', 'stylelint', 'stylelint-config-standard'];
+  if (includeE2e) required.push('@playwright/test', '@axe-core/playwright');
+  return required.filter((dependency) => !known[dependency]);
+}
+
+export function packageManagerCommand(root: string): { command: string; installArgs: string[] } {
+  const managers = [
+    { command: 'npm', lock: 'package-lock.json', installArgs: ['install', '--save-dev'] },
+    { command: 'pnpm', lock: 'pnpm-lock.yaml', installArgs: ['add', '--save-dev'] },
+    { command: 'yarn', lock: 'yarn.lock', installArgs: ['add', '--dev'] },
+    { command: 'bun', lock: 'bun.lockb', installArgs: ['add', '--dev'] },
+  ].filter(({ lock }) => existsSync(join(root, lock)));
+  const declared = existsSync(join(root, 'package.json'))
+    ? (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { packageManager?: string }).packageManager?.split('@')[0]
+    : undefined;
+  if (managers.length > 1 && !declared) throw new Error('Several package-manager lockfiles found; set packageManager in package.json before installing dependencies.');
+  const declaredManager = declared && ['npm', 'pnpm', 'yarn', 'bun'].includes(declared)
+    ? managers.find(({ command }) => command === declared) ?? {
+      command: declared,
+      installArgs: declared === 'npm' ? ['install', '--save-dev'] : declared === 'yarn' ? ['add', '--dev'] : ['add', '--save-dev'],
+    }
+    : undefined;
+  const selected = declaredManager ?? (managers.length === 1 ? managers[0]! : { command: 'npm', installArgs: ['install', '--save-dev'] });
+  return { command: selected.command, installArgs: selected.installArgs };
+}
+
+export function diagnoseProject(root: string): { checks: Array<{ label: string; ok: boolean; detail: string; fix: string }>; git: ReturnType<typeof gitState> } {
+  const git = gitState(root);
+  const configExists = existsSync(join(root, '.shopguard', 'project.json'));
+  let validConfig = false;
+  let store = '';
+  if (configExists) {
+    try { store = loadConfig(root).store; validConfig = true; } catch { /* summarized below */ }
+  }
+  const dependencies = missingSetupDependencies(root);
+  const shopifyVersion = run('shopify', ['version'], root, true);
+  const checks = [
+    { label: 'ShopGuard config', ok: validConfig, detail: validConfig ? store : configExists ? 'invalid' : 'missing', fix: 'sgd configure --store <store>.myshopify.com' },
+    { label: 'Theme structure', ok: isTheme(root) && verifyThemeStructure(root).length === 0, detail: isTheme(root) ? 'valid' : 'incomplete', fix: 'sgd init' },
+    { label: 'Git repository', ok: git.inside, detail: git.inside ? git.branch : 'not initialized', fix: 'git init' },
+    { label: 'Git origin', ok: Boolean(git.remote), detail: git.remote || 'not configured', fix: 'Create a private client repository and add its HTTPS URL as origin' },
+    { label: 'Working tree', ok: !git.dirty, detail: git.dirty ? 'has changes' : 'clean', fix: 'Review `git status` before sync or import' },
+    { label: 'Node.js', ok: Number(process.versions.node.split('.')[0]) >= 22, detail: process.versions.node, fix: 'Install Node.js 22 or newer' },
+    { label: 'Shopify CLI', ok: shopifyVersion.ok, detail: shopifyVersion.output.trim().split('\n')[0] || 'not found', fix: 'Install Shopify CLI and sign in manually for the configured store' },
+    { label: 'Local quality dependencies', ok: dependencies.length === 0, detail: dependencies.length ? `missing: ${dependencies.join(', ')}` : 'available', fix: 'Run `sgd setup` and confirm dependency installation' },
+  ];
+  return { checks, git };
 }
 
 export function checkProject(root: string): string[] {
@@ -293,9 +378,11 @@ export function preflight(root: string, runner?: CommandRunner): { protectedFile
   return { protectedFiles: protectedChanged, dirty: state.dirty, issues };
 }
 
-export function changedThemeFiles(root: string, runner: CommandRunner = (command, args, cwd) => run(command, args, cwd, true)): string[] {
-  const tracked = runner('git', ['diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD'], root);
-  const untracked = runner('git', ['ls-files', '--others', '--exclude-standard'], root);
+export function changedThemeFiles(root: string, runner: CommandRunner = (command, args, cwd) => run(command, args, cwd, true), staged = false): string[] {
+  const tracked = staged
+    ? runner('git', ['diff', '--cached', '--name-only', '--diff-filter=ACMRTUXB'], root)
+    : runner('git', ['diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD'], root);
+  const untracked = staged ? { output: '' } : runner('git', ['ls-files', '--others', '--exclude-standard'], root);
   return [...new Set([...tracked.output.split('\n'), ...untracked.output.split('\n')]
     .map((file) => file.trim()).filter((file) => /\.(liquid|css|js|ts|json|scss)$/.test(file)
       && !/^(dist|node_modules|\.shopguard|\.git)\//.test(file)
