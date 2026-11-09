@@ -5,6 +5,7 @@ import {
   findLiveTheme,
   gitState,
   guardClientRepository,
+  isStarterRemote,
   isTheme,
   importNewFiles,
   loadConfig,
@@ -34,6 +35,21 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
   const current = loadConfig(root);
   if (current.store !== config.store) throw new Error('The configured store changed during initialization; refusing to continue');
   let git = gitState(root, deps.run);
+  if (isStarterRemote(git.remote)) {
+    const existingStarter = deps.run('git', ['remote', 'get-url', 'starter'], root);
+    if (existingStarter.ok && existingStarter.output.trim()) {
+      throw new Error('The ShopGuard starter is configured as both origin and starter. Review `git remote -v` and resolve the duplicate remotes before running sgd init.');
+    }
+    const confirmation = `RENAME STARTER REMOTE ${config.store}`;
+    deps.output(`Цей клон має origin ShopGuard Starter. ShopGuard може локально перейменувати origin на starter. Це не змінює адресу репозиторію й нічого не надсилає. Після цього можна продовжити sgd init.`);
+    if (!await deps.prompt('Перейменувати локальний Git remote origin на starter?', confirmation)) {
+      throw new Error(`Перейменування не підтверджено. Нічого не змінено. Щоб продовжити вручну: git remote rename origin starter, перевір git remote -v і повтори sgd init. Підтвердження: ${confirmation}`);
+    }
+    const renamed = deps.run('git', ['remote', 'rename', 'origin', 'starter'], root);
+    if (!renamed.ok) throw new Error(`Не вдалося перейменувати origin на starter. Перевір git remote -v і виконай команду вручну: git remote rename origin starter.\n${renamed.output.trim()}`);
+    deps.output('Remote перейменовано: origin → starter. Жодного push не виконано. Продовжую ініціалізацію.');
+    git = gitState(root, deps.run);
+  }
   guardClientRepository(git.remote);
   const stateFile = join(root, '.shopguard', 'init-state.json');
   let filesToCommit: string[];

@@ -49,3 +49,11 @@ Title: Clarify starter cloning, Shopify setup, and Git remotes. README now contr
 ## 2026-11-09 19:50 — Improvement
 
 Title: Guide first-run setup and reduce command memorization. Added `npm run bootstrap` to install, check, and link the CLI in one command. Repeated `sgd configure` for the same store now keeps the existing config and prints `sgd init`; changing to another store fails safely with an explicit WebStorm instruction. The starter-origin error now gives the exact `git remote rename origin starter` recovery, and `sgd init` prints the next HTTPS `origin` and push commands without executing them. README documents the guided sequence. Validation: `npm run check` passes (48 tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify store or Git remote action was performed. Module: CLI/config/README. Issue: #8.
+
+## 2026-11-09 20:08 — Improvement
+
+Title: Guide and confirm direct-starter clone recovery. `sgd init` now detects a ShopGuard starter `origin`, asks for the exact `RENAME STARTER REMOTE <store>` confirmation, renames it locally to `starter`, and continues; declining leaves remotes untouched and stops before any Shopify request. README now shows the full template and direct-clone flows, including fallback commands for clones that do not yet contain `npm run bootstrap`. Validation: `npm run check` passes (50 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify request, remote push, commit, or package publishing was performed. Module: CLI/init/README. Issue: #8.
+
+## 2026-11-09 20:14 — Improvement
+
+Title: Start Shopify theme setup with one short command. Added `npm start -- --store <store.myshopify.com>` to run bootstrap/check/link, Shopify login, store configuration, and `sgd init` in order, stopping on the first failure. Added input, command-order, and fail-fast tests. README now shows the single-command flow. Validation: `npm run check` passes (53 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `node --check scripts/onboard.js` and `git diff --check` pass. No Shopify login, store request, Git push, commit, or package publishing was performed. Module: CLI/onboarding/README. Issue: #8.
