@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { checkProject, findRoot, gitState, guardPush, initLocal, isTheme, listFiles, loadConfig, preflight, run, setupLocal, shopifyArgs, validateConfig } from './core.js';
+
+const args = process.argv.slice(2); const command = args[0] ?? '--help';
+const value = (flag: string): string | undefined => { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; };
+const has = (flag: string): boolean => args.includes(flag);
+const help = () => console.log(`sgd 0.2.0\n\nCommands:\n  init       plan or create a local project\n  setup      add idempotent starter tooling\n  status     show project and integration state\n  doctor     read-only local diagnostics\n  dev        guarded development-theme dry run\n  sync       inspect Git synchronization\n  pull       preview an isolated theme snapshot\n  push       guarded manual staging check\n  preflight  release and protected-file checks\n  lint       offline structural lint\n  format     list selected files\n  check      run read-only quality gates`);
+function rootFromArg(): string { return resolve(value('--path') ?? process.cwd()); }
+function projectRoot(): string { return findRoot(rootFromArg()); }
+function fail(message: string): never { throw new Error(message); }
+
+try {
+  if (command === '--help' || command === '-h') help();
+  else if (command === '--version' || command === '-v') console.log('0.2.0');
+  else if (command === 'init') { const root = rootFromArg(); const store = value('--store'); if (!store) fail('init requires --store <store.myshopify.com>'); const config = validateConfig({ store, mode: value('--mode') ?? 'existing', authAlias: value('--auth-alias'), themeRole: value('--theme-role') ?? 'unpublished', productionBranch: value('--production-branch') ?? 'master', developmentBranch: value('--development-branch') ?? 'dev' }); const result = initLocal(root, config, has('--mock')); console.log(`Plan:\n${result.plan.map((item) => `- ${item}`).join('\n')}`); if (!has('--mock')) console.log('No files changed. Add --mock to create local fixtures; Shopify and GitHub are never contacted.'); else console.log(`Created:\n${result.created.map((item) => `- ${item}`).join('\n')}`); }
+  else if (command === 'setup') { const root = projectRoot(); const created = setupLocal(root); if (created.length) console.log(`Created:\n${created.map((file) => `- ${file}`).join('\n')}`); else console.log('Setup is already up to date; no files changed.'); }
+  else if (command === 'status') { const root = projectRoot(); const config = loadConfig(root); const git = gitState(root); console.log(`Project: ${root}\nStore: ${config.store}\nTheme: ${config.themeId ?? 'unverified'}\nBranch: ${git.branch}\nOrigin: ${git.remote || 'not configured'}\nStore access: unverified\nGitHub integration: ${config.github?.connected ? 'configured' : 'pending'}\nProduction integration: pending`); }
+  else if (command === 'doctor') { const root = rootFromArg(); for (const [tool, toolArgs] of [['node', ['--version']], ['git', ['--version']], ['shopify', ['version']]] as [string, string[]][]) { const result = run(tool, toolArgs, root, true); console.log(`${tool}: ${result.ok ? result.output.trim().split('\n')[0] : 'unavailable'}`); } console.log(`Project: ${root}\nTheme structure: ${isTheme(root) ? 'detected' : 'not detected'}\nStore access: unverified (no network request)`); }
+  else if (command === 'dev') { const root = projectRoot(); const config = loadConfig(root); if (config.themeRole === 'live') fail('Refusing development on Live theme'); const commandArgs = [...shopifyArgs(config, 'theme dev'), '--theme', config.themeId ?? 'development']; console.log(run('shopify', commandArgs, root, false).output); console.log('No remote mutation performed.'); }
+  else if (command === 'sync') { const root = projectRoot(); const git = gitState(root); console.log(has('--check') ? `Git sync check: branch=${git.branch}, dirty=${git.dirty}, origin=${git.remote || 'missing'}` : 'Sync is read-only by default. Use --check for a fetch plan; no rebase, reset, stash or force-push is performed.'); }
+  else if (command === 'pull') { const root = projectRoot(); const config = loadConfig(root); const snapshot = join(root, '.shopguard', 'snapshots', `${Date.now()}`); mkdirSync(snapshot, { recursive: true }); writeFileSync(join(snapshot, 'README.txt'), `Isolated preview for ${config.store}; no local files overwritten.\n`); console.log(`Preview snapshot: ${snapshot}\nNo local overwrite performed.`); }
+  else if (command === 'push') { const root = projectRoot(); const config = loadConfig(root); const git = gitState(root); guardPush(config, git.remote, config.themeRole === 'live'); fail('Manual push is disabled in this offline MVP; review the preview and use the approved Shopify workflow manually.'); }
+  else if (command === 'preflight') { const result = preflight(projectRoot()); console.log(`Dirty: ${result.dirty}\nProtected files: ${result.protectedFiles.length ? result.protectedFiles.join(', ') : 'none'}\nIssues: ${result.issues.length ? result.issues.join('; ') : 'none'}`); if (result.issues.length) process.exitCode = 1; }
+  else if (command === 'lint' || command === 'check') { const errors = checkProject(projectRoot()); console.log(errors.length ? errors.join('\n') : 'Structural checks passed'); if (errors.length) process.exitCode = 1; }
+  else if (command === 'format') { const root = projectRoot(); const files = listFiles(root).filter((file) => /\.(liquid|css|js|ts|json)$/.test(file) && !file.startsWith('dist/')); console.log(files.length ? `Selected files:\n${files.join('\n')}` : 'No selected files'); }
+  else fail(`Command not implemented: ${command}`);
+} catch (error) { console.error(`sgd: ${error instanceof Error ? error.message : 'Unexpected error'}`); process.exitCode = 1; }

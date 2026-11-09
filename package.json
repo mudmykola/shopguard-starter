@@ -1,0 +1,1 @@
+{"name":"shopguard-private-cli","version":"0.2.0","private":true,"type":"module","engines":{"node":">=22"},"bin":{"sgd":"./dist/cli.js","shopguard":"./dist/cli.js"},"scripts":{"typecheck":"tsc --noEmit","build":"tsc","test":"npm run build && node --test test/*.test.js"},"devDependencies":{"typescript":"^5.9.3","@types/node":"^22.0.0"}}
