@@ -11,9 +11,12 @@ import {
   parseThemeList,
   planThemeImport,
   pullArgs,
+  selectableSourceThemes,
+  selectSourceTheme,
   setupLocal,
   shopifyCommandArgs,
   verifyThemeStructure,
+  type ShopifyTheme,
   type CommandRunner,
   type ProjectConfig,
 } from './core.js';
@@ -21,6 +24,8 @@ import {
 export type InitDependencies = {
   run: CommandRunner;
   prompt: (message: string, expected: string) => Promise<boolean>;
+  chooseSourceTheme?: (themes: ShopifyTheme[]) => Promise<string | undefined>;
+  sourceThemeId?: string;
   output: (message: string) => void;
   tempRoot?: string;
 };
@@ -33,6 +38,8 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
   const stateFile = join(root, '.shopguard', 'init-state.json');
   let filesToCommit: string[];
   let snapshot = '';
+
+  if (current.mode === 'new' && deps.sourceThemeId) throw new Error('--source-theme can only be used with an existing Shopify theme.');
 
   if (existsSync(stateFile)) {
     const state = JSON.parse(readFileSync(stateFile, 'utf8')) as { files?: unknown };
@@ -76,13 +83,18 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
     if (!listed.ok) throw new Error(`Shopify access check failed for ${config.store}. Sign in manually for this store; ShopGuard did not log out or switch accounts.\n${listed.output.trim()}`);
     const themes = parseThemeList(listed.output, config.store);
     const live = findLiveTheme(themes);
-    deps.output(`Themes returned for ${config.store}:\n${themes.map((theme) => `- ${theme.name} (${theme.role}, ID ${theme.id})`).join('\n')}\n\nSelected Live theme: ${live.name} (ID ${live.id})`);
+    const sources = selectableSourceThemes(themes);
+    if (!sources.length) throw new Error('Shopify returned no Live or unpublished themes that can be used as a local source.');
+    deps.output(`Теми магазину ${config.store}:\n${themes.map((theme) => `- ${theme.name} (${theme.role}, ID ${theme.id})${sources.some((source) => source.id === theme.id) ? '' : ' — недоступна як джерело'}`).join('\n')}\n\nВибір джерела лише завантажує файли локально. Це не ціль завантаження в Shopify.`);
+    const requestedSourceId = deps.sourceThemeId ?? await deps.chooseSourceTheme?.(sources);
+    const source = selectSourceTheme(themes, requestedSourceId);
+    deps.output(`Обрано джерело: ${source.name} (${source.role}, ID ${source.id}). Live ID магазину: ${live.id}.`);
 
-    if (!await deps.prompt('This downloads files from the Live theme to an isolated local temporary folder. It does not upload or publish anything.', `PULL ${live.id}`)) {
-      throw new Error('Live theme download was not confirmed; no local theme files were changed.');
+    if (!await deps.prompt(`Завантажити файли теми «${source.name}» локально? Shopify не отримає жодних змін.`, `PULL ${source.id}`)) {
+      throw new Error('Завантаження вибраної теми не підтверджено; локальні файли не змінено.');
     }
-    snapshot = mkdtempSync(join(deps.tempRoot ?? tmpdir(), 'shopguard-live-'));
-    const pullCommandArgs = pullArgs(config, live.id, snapshot);
+    snapshot = mkdtempSync(join(deps.tempRoot ?? tmpdir(), 'shopguard-theme-'));
+    const pullCommandArgs = pullArgs(config, source.id, snapshot);
     deps.output(`Local-only download:\nshopify ${pullCommandArgs.join(' ')}\nTemporary destination: ${snapshot}`);
     const pulled = deps.run('shopify', pullCommandArgs, root);
     if (!pulled.ok) throw new Error(`Theme download failed. Snapshot retained for inspection at ${snapshot}.\n${pulled.output.trim()}`);
@@ -147,7 +159,7 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
     deps.output('Files are staged for your review. Rerun sgd init to continue after deciding how to handle them.');
     return;
   }
-  const committed = deps.run('git', ['commit', '-m', 'chore(theme): import live baseline'], root);
+  const committed = deps.run('git', ['commit', '-m', 'chore(theme): import Shopify baseline'], root);
   if (!committed.ok) throw new Error(`Baseline commit failed. Staged diff is preserved.\n${committed.output.trim()}`);
   const dev = deps.run('git', ['branch', '--list', config.developmentBranch], root);
   if (dev.output.trim()) {

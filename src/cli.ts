@@ -30,6 +30,7 @@ import {
   setupLocal,
   shopifyCommandArgs,
   validateConfig,
+  type ShopifyTheme,
 } from './core.js';
 import { initProject } from './workflow.js';
 import { pushTheme, pushThemeBaseline } from './push.js';
@@ -42,7 +43,7 @@ const help = () => console.log(`sgd 0.3.0
 
 Commands:
   configure  create .shopguard/project.json for this client project
-  init       import an existing Live theme or create a new skeleton
+  init       choose a Shopify theme to import or create a new skeleton
   setup      add quality tooling, VS Code defaults and optional hooks
   status     show actionable project and integration state
   doctor     read-only diagnostics with safe fix guidance
@@ -54,6 +55,9 @@ Commands:
   lint       run Theme Check and configured project linters
   format     format changed theme files only
   check      run read-only quality gates
+
+Init option:
+  --source-theme <id> select a theme to download locally
 
 Setup options:
   --e2e             include Playwright and axe dependencies
@@ -67,6 +71,14 @@ function createPrompt(): (message: string, expected: string) => Promise<boolean>
     try { return (await terminal.question(`${message}\nType exactly: ${expected}\n> `)).trim() === expected; }
     finally { terminal.close(); }
   };
+}
+
+async function chooseSourceThemeInteractively(themes: ShopifyTheme[]): Promise<string | undefined> {
+  if (!stdin.isTTY) return undefined;
+  const terminal = createInterface({ input: stdin, output: stdout });
+  try {
+    return (await terminal.question(`Введи ID теми для локального завантаження (${themes.map((theme) => theme.id).join(', ')}):\n> `)).trim();
+  } finally { terminal.close(); }
 }
 
 function rootFromArg(): string { return resolve(value('--path') ?? process.cwd()); }
@@ -114,11 +126,17 @@ async function main(): Promise<void> {
       guardClientRepository(state.remote);
       const stages = config.mode === 'new'
         ? '1. Download Shopify skeleton to an isolated temporary folder\n2. Preview import\n3. Copy new files only'
-        : '1. Read-only theme list\n2. Confirm the unique Live theme\n3. Pull to a fresh isolated temporary folder\n4. Preview writes and preserve conflicts\n5. Copy new files only';
+        : '1. Read-only theme list\n2. Choose a Live or unpublished source theme\n3. Confirm its ID\n4. Pull to a fresh isolated temporary folder\n5. Preview writes and preserve conflicts\n6. Copy new files only';
       console.log(`Plan for ${config.store}:\n${stages}\nGit: ${state.inside ? `${state.branch}; origin=${state.remote || 'none'}` : 'not initialized'}\nNo remote writes or Live theme changes.`);
       return;
     }
-    await initProject(root, config, { run: (bin, binArgs, cwd) => run(bin, binArgs, cwd, true), prompt: createPrompt(), output: console.log });
+    await initProject(root, config, {
+      run: (bin, binArgs, cwd) => run(bin, binArgs, cwd, true),
+      prompt: createPrompt(),
+      chooseSourceTheme: chooseSourceThemeInteractively,
+      sourceThemeId: value('--source-theme'),
+      output: console.log,
+    });
     return;
   }
   if (command === 'setup') {

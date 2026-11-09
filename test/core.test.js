@@ -9,7 +9,7 @@ import { initProject } from '../dist/workflow.js';
 import {
   changedThemeFiles, checkProject, findLiveTheme, guardClientRepository, guardPush, importNewFiles,
   parseThemeList, planThemeImport, preflight, protectedFiles, pullArgs,
-  run, runInteractive, safeEnvironment, setupLocal, shopifyCommandArgs, validateConfig,
+  run, runInteractive, safeEnvironment, setupLocal, shopifyCommandArgs, validateConfig, selectableSourceThemes, selectSourceTheme,
   verifyThemeStructure, remotePreflight, managePreCommitHook, missingSetupDependencies, packageManagerCommand,
 } from '../dist/core.js';
 import { pushTheme, pushThemeBaseline } from '../dist/push.js';
@@ -95,7 +95,7 @@ function fakeStagingShopify(root, remote, { decline = false, driftAfterReview = 
     output() {},
   };
 }
-function fakeWorkflow({ output = liveThemes(), failList = false, promptResults = [true, true, true, true, true], pullTree = true } = {}) {
+function fakeWorkflow({ output = liveThemes(), failList = false, promptResults = [true, true, true, true, true], pullTree = true, chooseSourceThemeId = '123' } = {}) {
   const calls = [];
   const prompts = [];
   let promptIndex = 0;
@@ -129,7 +129,7 @@ function fakeWorkflow({ output = liveThemes(), failList = false, promptResults =
     promptIndex += 1;
     return result;
   };
-  return { calls, prompts, run: runner, prompt, output() {} };
+  return { calls, prompts, run: runner, prompt, chooseSourceTheme: async () => chooseSourceThemeId || undefined, output() {} };
 }
 
 test('1. Store config rejects URLs, paths, uppercase and suspicious domains', () => {
@@ -163,6 +163,17 @@ test('6. Theme list must identify exactly one Live/main theme', () => {
 test('7. Unknown roles are not interpreted as Live', () => {
   const themes = parseThemeList(JSON.stringify([{ id: 4, name: 'Theme', role: 'primary' }]), storeA);
   assert.throws(() => findLiveTheme(themes), /exactly one Live/);
+});
+test('7a. Source selection allows Live and unpublished themes but excludes transient development themes', () => {
+  const themes = parseThemeList(JSON.stringify([
+    { id: '123', name: 'Live', role: 'main', shop: storeA },
+    { id: '456', name: 'Copy', role: 'unpublished', shop: storeA },
+    { id: '789', name: 'Preview', role: 'development', shop: storeA },
+  ]), storeA);
+  assert.deepEqual(selectableSourceThemes(themes).map(({ id }) => id), ['123', '456']);
+  assert.equal(selectSourceTheme(themes, '456').role, 'unpublished');
+  assert.throws(() => selectSourceTheme(themes, '789'), /not a unique Live or unpublished source/);
+  assert.throws(() => selectSourceTheme(themes, undefined), /No source theme was selected/);
 });
 test('8. Shopify args carry explicit store and supported auth alias', () => {
   const args = shopifyCommandArgs(validateConfig({ store: storeA, authAlias: 'client-account' }), ['theme', 'list', '--json']);
@@ -211,6 +222,21 @@ test('14. Full mocked init pulls Live locally and creates master/dev at the same
     assert.ok(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'pull' && call.args.includes('123')));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+test('14b. Init lets the operator choose an unpublished source without changing the manual push target', async () => {
+  const root = clientRepo(); const deps = fakeWorkflow({ chooseSourceThemeId: '456' });
+  const projectConfig = validateConfig({ ...config(), themeId: '789', themeRole: 'unpublished', github: { connected: false } });
+  try {
+    writeFileSync(join(root, '.shopguard/project.json'), `${JSON.stringify(projectConfig)}\n`);
+    await initProject(root, projectConfig, { ...deps, tempRoot: root });
+    const saved = JSON.parse(readFileSync(join(root, '.shopguard/project.json'), 'utf8'));
+    assert.equal(saved.liveThemeId, '123');
+    assert.equal(saved.themeId, '789');
+    const pull = deps.calls.find((call) => call.command === 'shopify' && call.args[1] === 'pull');
+    assert.equal(pull.args[pull.args.indexOf('--theme') + 1], '456');
+    assert.equal(deps.prompts.includes('PULL 456'), true);
+    assert.equal(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'push'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('14a. New-theme init creates a local Shopify skeleton without querying a store', async () => {
   const root = clientRepo(); const deps = fakeWorkflow(); const newConfig = validateConfig({ ...config(), mode: 'new' });
   try {
@@ -244,8 +270,17 @@ test('17. Declining store query sends no Shopify request', async () => {
 });
 test('18. Declining Live pull does not invoke Shopify pull', async () => {
   const root = clientRepo(); const deps = fakeWorkflow({ promptResults: [true, false] });
-  try { await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /not confirmed/); assert.equal(deps.calls.some((call) => call.args[1] === 'pull'), false); }
+  try { await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /не підтверджено/); assert.equal(deps.calls.some((call) => call.args[1] === 'pull'), false); }
   finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('18a. Missing or invalid source selection stops before any Shopify pull', async () => {
+  for (const chooseSourceThemeId of ['', '789']) {
+    const root = clientRepo(); const deps = fakeWorkflow({ chooseSourceThemeId });
+    try {
+      await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /source theme was selected|not a unique Live or unpublished source/);
+      assert.equal(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'pull'), false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
 });
 test('19. Declining import leaves project theme files unchanged', async () => {
   const root = clientRepo(); const deps = fakeWorkflow({ promptResults: [true, true, false] });

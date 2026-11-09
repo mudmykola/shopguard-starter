@@ -217,6 +217,18 @@ export function findLiveTheme(themes: ShopifyTheme[]): ShopifyTheme {
   return live[0]!;
 }
 
+export function selectableSourceThemes(themes: ShopifyTheme[]): ShopifyTheme[] {
+  return themes.filter((theme) => ['live', 'unpublished'].includes(theme.role.toLowerCase()));
+}
+
+export function selectSourceTheme(themes: ShopifyTheme[], id: string | undefined): ShopifyTheme {
+  if (!id) throw new Error('No source theme was selected; no files were downloaded.');
+  if (!/^\d+$/.test(id)) throw new Error('Source theme ID must be numeric; no files were downloaded.');
+  const matches = selectableSourceThemes(themes).filter((theme) => theme.id === id);
+  if (matches.length !== 1) throw new Error(`Theme ID ${id} is not a unique Live or unpublished source for this store.`);
+  return matches[0]!;
+}
+
 export function pullArgs(config: ProjectConfig, themeId: string, path: string): string[] {
   return shopifyCommandArgs(config, ['theme', 'pull', '--theme', themeId, '--path', path, '--nodelete']);
 }
