@@ -308,7 +308,8 @@ test('14a. New-theme init creates a local Shopify skeleton without querying a st
     await initProject(root, newConfig, { ...deps, tempRoot: root });
     assert.equal(existsSync(join(root, 'layout/theme.liquid')), true);
     assert.equal(deps.calls.some((call) => call.command === 'shopify' && call.args.includes('list')), false);
-    assert.ok(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'init' && call.args.includes('--no-input')));
+    const skeleton = deps.calls.find((call) => call.command === 'shopify' && call.args[1] === 'init');
+    assert.ok(skeleton); assert.ok(!skeleton.args.includes('--no-input'));
     assert.equal(git(root, ['rev-parse', 'master']), git(root, ['rev-parse', 'dev']));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

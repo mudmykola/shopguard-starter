@@ -8,13 +8,20 @@ test('npm start requires a valid Shopify store domain', () => {
   assert.throws(() => parseStoreArgument(['--store', 'https://my-store.myshopify.com']), /без https/);
 });
 
-test('npm start runs bootstrap, Shopify login, configure, and init in order', () => {
+const fakeSpinner = ({ text }) => ({
+  start() { return this; },
+  succeed(message) { this.completed = message; return this; },
+  fail(message) { this.failed = message; return this; },
+  text,
+});
+
+test('npm start runs bootstrap, Shopify login, configure, and init in order', async () => {
   const calls = [];
-  const result = runOnboarding('my-store.myshopify.com', {
-    cwd: '/project',
-    execute(command, args, options) { calls.push({ command, args, options }); return { status: 0 }; },
+  const logs = [];
+  const result = await runOnboarding('my-store.myshopify.com', {
+    cwd: '/project', spinnerFactory: fakeSpinner, log(message) { logs.push(message); }, warn() {},
+    async execute(command, args, options) { calls.push({ command, args, options }); return { status: 0, output: 'ℹ pass 53\nℹ skipped 3' }; },
     platform: 'darwin',
-    log() {},
   });
 
   assert.equal(result, 0);
@@ -24,14 +31,18 @@ test('npm start runs bootstrap, Shopify login, configure, and init in order', ()
     [process.execPath, ['/project/dist/cli.js', 'configure', '--store', 'my-store.myshopify.com', '--path', '/project']],
     [process.execPath, ['/project/dist/cli.js', 'init', '--path', '/project']],
   ]);
-  assert.ok(calls.every(({ options }) => options.stdio === 'inherit'));
+  assert.equal(calls[0].options.stdio, 'pipe');
+  assert.ok(calls.slice(1).every(({ options }) => options.stdio === 'inherit'));
+  assert.ok(logs.some((message) => message.includes('Готово')));
 });
 
-test('npm start stops immediately when any setup step fails', () => {
+test('npm start stops immediately when any setup step fails', async () => {
   const calls = [];
-  const result = runOnboarding('my-store.myshopify.com', {
-    execute(command, args) { calls.push([command, args]); return { status: calls.length === 2 ? 1 : 0 }; },
+  const result = await runOnboarding('my-store.myshopify.com', {
+    spinnerFactory: fakeSpinner,
+    async execute(command, args) { calls.push([command, args]); return { status: calls.length === 2 ? 1 : 0, output: 'failed' }; },
     log() {},
+    warn() {},
   });
   assert.equal(result, 1);
   assert.equal(calls.length, 2);

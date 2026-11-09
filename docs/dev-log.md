@@ -61,3 +61,11 @@ Title: Start Shopify theme setup with one short command. Added `npm start -- --s
 ## 2026-11-09 20:24 — Fix
 
 Title: Support Shopify CLI versions without the global `--no-input` flag. `theme list` failed in the user's installed CLI because `shopifyCommandArgs` appended a flag rejected by that version. Removed the flag from generated store-scoped list/pull arguments; explicit store/theme IDs and ShopGuard's typed confirmations remain. Validation: `npm run check` passes (53 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify request was run. Module: CLI/Shopify compatibility. Issue: #8.
+
+## 2026-11-09 20:46 — Improvement
+
+Title: Polish the interactive CLI and show live progress. Replaced copy/paste confirmation phrases with arrow-key menus that default to Cancel and display the store, theme, file count, branch, and side effects. Theme selection now uses a guided menu. Added consistent icons/colors, onboarding step status, Ora spinners for asynchronous Shopify and bootstrap commands, fail-fast output, no-color support, and secret redaction. README documents keyboard navigation. Validation: `npm run check` passes (55 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify login or store request was run. Module: CLI/terminal UX. Issue: #8.
+
+## 2026-11-09 20:51 — Fix
+
+Title: Avoid secret-scanner false positive in redaction test. GitHub Push Protection identified the test's literal fake Shopify token as a credential. The fixture now assembles the token from two strings at runtime, preserving the redaction assertion without embedding a token-shaped value in the source. Validation: `npm run check` passes (55 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. Module: CLI tests. Issue: #8.

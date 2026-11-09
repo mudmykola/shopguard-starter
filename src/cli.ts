@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { createInterface } from 'node:readline/promises';
-import { stdin, stdout } from 'node:process';
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -34,6 +32,7 @@ import {
 } from './core.js';
 import { initProject } from './workflow.js';
 import { pushTheme, pushThemeBaseline } from './push.js';
+import { chooseTheme, confirmAction, outputMessage, printError, runWithSpinner } from './terminal-ui.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '--help';
@@ -65,20 +64,11 @@ Setup options:
   --uninstall-hooks remove only the hook created by ShopGuard`);
 
 function createPrompt(): (message: string, expected: string) => Promise<boolean> {
-  return async (message, expected) => {
-    if (!stdin.isTTY) return false;
-    const terminal = createInterface({ input: stdin, output: stdout });
-    try { return (await terminal.question(`${message}\nType exactly: ${expected}\n> `)).trim() === expected; }
-    finally { terminal.close(); }
-  };
+  return (message, action) => confirmAction(message, action);
 }
 
 async function chooseSourceThemeInteractively(themes: ShopifyTheme[]): Promise<string | undefined> {
-  if (!stdin.isTTY) return undefined;
-  const terminal = createInterface({ input: stdin, output: stdout });
-  try {
-    return (await terminal.question(`Введи ID теми для локального завантаження (${themes.map((theme) => theme.id).join(', ')}):\n> `)).trim();
-  } finally { terminal.close(); }
+  return chooseTheme(themes);
 }
 
 function rootFromArg(): string { return resolve(value('--path') ?? process.cwd()); }
@@ -143,10 +133,11 @@ async function main(): Promise<void> {
     }
     await initProject(root, config, {
       run: (bin, binArgs, cwd) => run(bin, binArgs, cwd, true),
+      runShopify: (binArgs, cwd, label) => runWithSpinner('shopify', binArgs, cwd, label),
       prompt: createPrompt(),
       chooseSourceTheme: chooseSourceThemeInteractively,
       sourceThemeId: value('--source-theme'),
-      output: console.log,
+      output: outputMessage,
     });
     return;
   }
@@ -188,7 +179,7 @@ async function main(): Promise<void> {
     if (has('--verify-store')) {
       const project = findRoot(root); const config = loadConfig(project);
       if (!await createPrompt()(`Буде надіслано read-only запит списку тем до ${config.store}.`, `LIST ${config.store}`)) fail('Перевірку магазину не підтверджено.');
-      const result = run('shopify', shopifyCommandArgs(config, ['theme', 'list', '--json', '--path', project]), project, true);
+      const result = await runWithSpinner('shopify', shopifyCommandArgs(config, ['theme', 'list', '--json', '--path', project]), project, `Перевіряю доступ до ${config.store}`);
       if (!result.ok) fail(`Не вдалося перевірити доступ до ${config.store}. Увійди вручну; ShopGuard не виконував вихід з акаунту.`);
       const themes = parseThemeList(result.output, config.store); console.log(`Доступ підтверджено для ${config.store}; отримано тем: ${themes.length}.`);
     }
@@ -198,7 +189,7 @@ async function main(): Promise<void> {
     const root = projectRoot(); const config = loadConfig(root);
     if (config.themeRole === 'live') fail('Refusing development on a Live theme');
     const devArgs = shopifyCommandArgs(config, ['theme', 'dev', '--path', root]);
-    const listed = run('shopify', remoteThemeArgs(config), root, true);
+    const listed = await runWithSpinner('shopify', remoteThemeArgs(config), root, `Перевіряю development theme у ${config.store}`);
     if (!listed.ok) fail(`Could not verify themes for ${config.store}; development was not started. ${listed.output}`);
     parseThemeList(listed.output, config.store);
     console.log(`Target store verified: ${config.store}. Shopify CLI may upload the current theme to a development theme.\nshopify ${devArgs.join(' ')}`);
@@ -243,7 +234,7 @@ async function main(): Promise<void> {
     if (git.dirty) fail('Working tree is dirty; commit or review local changes before importing a Shopify snapshot.');
     const target = value('--theme') ?? config.liveThemeId;
     if (!target) fail('pull requires --theme <id> or an imported liveThemeId in project.json');
-    const listed = run('shopify', remoteThemeArgs(config), root, true);
+    const listed = await runWithSpinner('shopify', remoteThemeArgs(config), root, `Перевіряю теми магазину ${config.store}`);
     if (!listed.ok) fail(`Could not verify themes for ${config.store}; pull stopped. ${listed.output}`);
     const theme = parseThemeList(listed.output, config.store).find((item) => item.id === target);
     if (!theme) fail(`Theme ${target} is not present in the current theme list for ${config.store}.`);
@@ -254,7 +245,7 @@ async function main(): Promise<void> {
     const commandArgs = pullArgs(config, target, snapshot);
     console.log(`Verified source: ${theme.name} (${theme.role}), ${config.store}. Snapshot: ${snapshot}\nshopify ${commandArgs.join(' ')}`);
     if (!await createPrompt()(`Download this remote theme into an isolated ignored snapshot?`, `PULL ${target}`)) fail('Shopify pull was not confirmed.');
-    const downloaded = run('shopify', commandArgs, root, true);
+    const downloaded = await runWithSpinner('shopify', commandArgs, root, `Завантажую тему ${theme.name} локально`);
     if (!downloaded.ok) fail(`Shopify pull failed: ${downloaded.output}`);
     const preview = planThemeImport(snapshot, root);
     console.log(`Snapshot preview: ${preview.added.length} new files; ${preview.conflicts.length} existing files preserved.${preview.protectedConflicts.length ? ` Protected conflicts: ${preview.protectedConflicts.join(', ')}` : ''}`);
@@ -270,7 +261,12 @@ async function main(): Promise<void> {
   }
   if (command === 'push') {
     const root = projectRoot(); const config = loadConfig(root);
-    const dependencies = { run: (bin: string, binArgs: string[], cwd: string) => run(bin, binArgs, cwd, true), prompt: createPrompt(), output: console.log };
+    const dependencies = {
+      run: (bin: string, binArgs: string[], cwd: string) => run(bin, binArgs, cwd, true),
+      runShopify: (binArgs: string[], cwd: string, label: string) => runWithSpinner('shopify', binArgs, cwd, label),
+      prompt: createPrompt(),
+      output: outputMessage,
+    };
     if (has('--baseline')) {
       await pushThemeBaseline(root, config, dependencies);
       return;
@@ -310,7 +306,7 @@ async function main(): Promise<void> {
     const errors = checkProject(root);
     if (errors.length) fail(errors.join('\n'));
     const checks: [string, string[]][] = [];
-    if (isTheme(root)) checks.push(['shopify', ['theme', 'check', '--path', root, '--no-input']]);
+    if (isTheme(root)) checks.push(['shopify', ['theme', 'check', '--path', root]]);
     if (existsSync(join(root, 'eslint.config.js')) || existsSync(join(root, 'eslint.config.mjs')) || existsSync(join(root, '.eslintrc.json'))) {
       if (existsSync(join(root, 'node_modules/.bin/eslint'))) checks.push(['npx', ['--no-install', 'eslint', '.']]);
       else console.log('ESLint config found but dependency is missing; install it in this theme project to enable the check.');
@@ -350,6 +346,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(ukrainianError(error instanceof Error ? error.message : 'Невідома помилка'));
+  printError(ukrainianError(error instanceof Error ? error.message : 'Невідома помилка'));
   process.exitCode = 1;
 });

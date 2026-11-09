@@ -103,6 +103,10 @@ export function safeEnvironment(env: Record<string, string | undefined>): Record
   ) as Record<string, string>;
 }
 
+export function redactOutput(output: string): string {
+  return output.replace(/(shpat_|shpss_|shptka_|gh[pousr]_|github_pat_)[A-Za-z0-9_-]+/g, '[REDACTED]');
+}
+
 export function run(command: string, args: string[], cwd: string, execute = false): CommandResult {
   const printable = [command, ...args].join(' ');
   if (!execute) return { ok: true, output: `[dry-run] ${printable}`, command: printable };
@@ -113,10 +117,7 @@ export function run(command: string, args: string[], cwd: string, execute = fals
     shell: false,
     timeout: 120_000,
   });
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.replace(
-    /(shpat_|shpss_|shptka_|gh[pousr]_|github_pat_)[A-Za-z0-9_-]+/g,
-    '[REDACTED]',
-  );
+  const output = redactOutput(`${result.stdout ?? ''}${result.stderr ?? ''}`);
   return { ok: result.status === 0, output, command: printable };
 }
 

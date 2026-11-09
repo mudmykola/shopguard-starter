@@ -24,6 +24,7 @@ import {
 
 export type InitDependencies = {
   run: CommandRunner;
+  runShopify?: (args: string[], cwd: string, label: string) => Promise<ReturnType<CommandRunner>>;
   prompt: (message: string, expected: string) => Promise<boolean>;
   chooseSourceTheme?: (themes: ShopifyTheme[]) => Promise<string | undefined>;
   sourceThemeId?: string;
@@ -70,13 +71,16 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
 
     if (current.mode === 'new') {
       snapshot = mkdtempSync(join(tmpdir(), 'shopguard-new-'));
-      const initArgs = ['theme', 'init', '--path', snapshot, '--no-input'];
+      const initArgs = ['theme', 'init', '--path', snapshot];
       deps.output(`Create an untouched Shopify skeleton locally. Configured future store: ${config.store}.\nshopify ${initArgs.join(' ')}\nTemporary destination: ${snapshot}`);
       if (!await deps.prompt('Download the official Shopify skeleton into a temporary local folder?', `SKELETON ${config.store}`)) {
         throw new Error('Skeleton creation was not confirmed; no files were imported.');
       }
-      const initialized = deps.run('shopify', initArgs, root);
+      const initialized = deps.runShopify
+        ? await deps.runShopify(initArgs, root, 'Завантажую Shopify skeleton')
+        : deps.run('shopify', initArgs, root);
       if (!initialized.ok) throw new Error(`Shopify skeleton download failed. Snapshot retained at ${snapshot}.\n${initialized.output.trim()}`);
+      deps.output('Shopify skeleton завантажено в тимчасову локальну папку.');
       const missing = verifyThemeStructure(snapshot);
       if (missing.length) throw new Error(`Downloaded files do not form a recognizable theme (missing ${missing.join(', ')}). Snapshot retained at ${snapshot}.`);
       const plan = planThemeImport(snapshot, root);
@@ -95,8 +99,11 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
     if (!await deps.prompt(`ShopGuard will query the theme list for ${config.store}.`, `LIST ${config.store}`)) {
       throw new Error('Store access check was not confirmed; nothing was sent to Shopify.');
     }
-    const listed = deps.run('shopify', listArgs, root);
+    const listed = deps.runShopify
+      ? await deps.runShopify(listArgs, root, 'Перевіряю магазин і список тем')
+      : deps.run('shopify', listArgs, root);
     if (!listed.ok) throw new Error(`Shopify access check failed for ${config.store}. Sign in manually for this store; ShopGuard did not log out or switch accounts.\n${listed.output.trim()}`);
+    deps.output(`Магазин ${config.store} відповів. Shopify поки не змінено.`);
     const themes = parseThemeList(listed.output, config.store);
     const live = findLiveTheme(themes);
     const sources = selectableSourceThemes(themes);
@@ -112,8 +119,11 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
     snapshot = mkdtempSync(join(deps.tempRoot ?? tmpdir(), 'shopguard-theme-'));
     const pullCommandArgs = pullArgs(config, source.id, snapshot);
     deps.output(`Local-only download:\nshopify ${pullCommandArgs.join(' ')}\nTemporary destination: ${snapshot}`);
-    const pulled = deps.run('shopify', pullCommandArgs, root);
+    const pulled = deps.runShopify
+      ? await deps.runShopify(pullCommandArgs, root, `Завантажую «${source.name}» локально`)
+      : deps.run('shopify', pullCommandArgs, root);
     if (!pulled.ok) throw new Error(`Theme download failed. Snapshot retained for inspection at ${snapshot}.\n${pulled.output.trim()}`);
+    deps.output(`Тему «${source.name}» завантажено локально; Shopify не змінено.`);
     const missing = verifyThemeStructure(snapshot);
     if (missing.length) throw new Error(`Downloaded files do not form a recognizable theme (missing ${missing.join(', ')}). Snapshot retained at ${snapshot}.`);
 

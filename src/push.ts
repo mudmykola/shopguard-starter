@@ -11,11 +11,13 @@ import {
   shopifyCommandArgs,
   verifyThemeStructure,
   type CommandRunner,
+  type CommandResult,
   type ProjectConfig,
 } from './core.js';
 
 export type PushDependencies = {
   run: CommandRunner;
+  runShopify?: (args: string[], cwd: string, label: string) => Promise<CommandResult>;
   prompt: (message: string, expected: string) => Promise<boolean>;
   output: (message: string) => void;
   now?: () => number;
@@ -72,14 +74,15 @@ export async function pushTheme(root: string, config: ProjectConfig, selectedFil
   const changedSinceReview = selected.filter((file) => hashIn(beforeUpload, file) !== hashIn(backup, file));
   if (changedSinceReview.length) throw new Error(`Remote files changed after review; upload cancelled: ${changedSinceReview.join(', ')}. Recovery snapshot: ${backup}`);
 
-  const check = deps.run('shopify', shopifyCommandArgs(config, ['theme', 'check', '--path', root, '--no-input']), root);
+  const checkArgs = shopifyCommandArgs(config, ['theme', 'check', '--path', root]);
+  const check = await runShopify(deps, checkArgs, root, 'Запускаю Shopify Theme Check');
   if (!check.ok) throw new Error(`Theme Check failed; nothing was uploaded. ${check.output}`);
   const pushArgs = shopifyCommandArgs(config, [
     'theme', 'push', '--theme', config.themeId!, '--nodelete', '--json', '--path', root,
     ...selected.flatMap((file) => ['--only', file]),
   ]);
   deps.output(`Shopify upload command (no Live/publish flags):\nshopify ${pushArgs.join(' ')}`);
-  const uploaded = deps.run('shopify', pushArgs, root);
+  const uploaded = await runShopify(deps, pushArgs, root, `Завантажую ${selected.length} файлів у тему`);
   if (!uploaded.ok) throw new Error(`Shopify upload failed. Recovery snapshot retained at ${backup}. ${uploaded.output}`);
 
   await assertRemoteStagingTheme(root, config, deps);
@@ -110,7 +113,7 @@ function assertTarget(root: string, config: ProjectConfig): void {
 
 async function assertRemoteStagingTheme(root: string, config: ProjectConfig, deps: PushDependencies): Promise<void> {
   const listArgs = shopifyCommandArgs(config, ['theme', 'list', '--json', '--path', root]);
-  const listed = deps.run('shopify', listArgs, root);
+  const listed = await runShopify(deps, listArgs, root, 'Перевіряю магазин і цільову тему');
   if (!listed.ok) throw new Error(`Could not verify target store/theme; upload stopped. ${listed.output}`);
   const themes = parseThemeList(listed.output, config.store);
   if (themes.some((theme) => ['live', 'main'].includes(theme.role.toLowerCase()) && theme.id === config.themeId)) {
@@ -124,11 +127,15 @@ async function takeSnapshot(root: string, config: ProjectConfig, deps: PushDepen
   const base = join(root, '.shopguard', area);
   mkdirSync(base, { recursive: true });
   const snapshot = mkdtempSync(join(base, `theme-${config.themeId}-`));
-  const pulled = deps.run('shopify', pullArgs(config, config.themeId!, snapshot), root);
+  const pulled = await runShopify(deps, pullArgs(config, config.themeId!, snapshot), root, 'Завантажую snapshot теми локально');
   if (!pulled.ok) throw new Error(`Could not pull a fresh remote snapshot; no upload was attempted. Snapshot path: ${snapshot}. ${pulled.output}`);
   const missing = verifyThemeStructure(snapshot);
   if (missing.length) throw new Error(`Remote snapshot is incomplete; no upload was attempted. Snapshot path: ${snapshot}. Missing: ${missing.join(', ')}.`);
   return snapshot;
+}
+
+function runShopify(deps: PushDependencies, args: string[], cwd: string, label: string): Promise<CommandResult> {
+  return deps.runShopify ? deps.runShopify(args, cwd, label) : Promise.resolve(deps.run('shopify', args, cwd));
 }
 
 function loadBaseline(root: string, themeId: string): string {
