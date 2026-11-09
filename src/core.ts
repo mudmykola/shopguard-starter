@@ -92,7 +92,6 @@ export function shopifyArgs(config: ProjectConfig, command = 'theme list'): stri
   return [
     ...command.split(' '),
     '--store', config.store,
-    '--no-input',
     '--path', process.cwd(),
     ...(config.authAlias ? ['--auth-alias', config.authAlias] : []),
   ];
@@ -160,7 +159,7 @@ export function runInteractive(
 }
 
 export function shopifyCommandArgs(config: ProjectConfig, args: string[]): string[] {
-  return [...args, '--store', config.store, '--no-input', ...(config.authAlias ? ['--auth-alias', config.authAlias] : [])];
+  return [...args, '--store', config.store, ...(config.authAlias ? ['--auth-alias', config.authAlias] : [])];
 }
 
 export function parseThemeList(output: string, expectedStore: string): ShopifyTheme[] {

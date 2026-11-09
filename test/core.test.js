@@ -183,7 +183,8 @@ test('7a. Source selection allows Live and unpublished themes but excludes trans
 });
 test('8. Shopify args carry explicit store and supported auth alias', () => {
   const args = shopifyCommandArgs(validateConfig({ store: storeA, authAlias: 'client-account' }), ['theme', 'list', '--json']);
-  assert.deepEqual(args.slice(-5), ['--store', storeA, '--no-input', '--auth-alias', 'client-account']);
+  assert.deepEqual(args.slice(-4), ['--store', storeA, '--auth-alias', 'client-account']);
+  assert.ok(!args.includes('--no-input'));
 });
 test('9. Inherited Shopify flags and tokens never reach child processes', () => {
   assert.deepEqual(safeEnvironment({ PATH: '/bin', SHOPIFY_FLAG_STORE: storeB, SHOPIFY_CLI_THEME_TOKEN: 'shptka-secret', HOME: '/tmp' }), { PATH: '/bin', HOME: '/tmp' });

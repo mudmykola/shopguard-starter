@@ -57,3 +57,7 @@ Title: Guide and confirm direct-starter clone recovery. `sgd init` now detects a
 ## 2026-11-09 20:14 — Improvement
 
 Title: Start Shopify theme setup with one short command. Added `npm start -- --store <store.myshopify.com>` to run bootstrap/check/link, Shopify login, store configuration, and `sgd init` in order, stopping on the first failure. Added input, command-order, and fail-fast tests. README now shows the single-command flow. Validation: `npm run check` passes (53 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `node --check scripts/onboard.js` and `git diff --check` pass. No Shopify login, store request, Git push, commit, or package publishing was performed. Module: CLI/onboarding/README. Issue: #8.
+
+## 2026-11-09 20:24 — Fix
+
+Title: Support Shopify CLI versions without the global `--no-input` flag. `theme list` failed in the user's installed CLI because `shopifyCommandArgs` appended a flag rejected by that version. Removed the flag from generated store-scoped list/pull arguments; explicit store/theme IDs and ShopGuard's typed confirmations remain. Validation: `npm run check` passes (53 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify request was run. Module: CLI/Shopify compatibility. Issue: #8.
