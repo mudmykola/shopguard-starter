@@ -172,7 +172,17 @@ export async function initProject(root: string, config: ProjectConfig, deps: Ini
     if (!created.ok) throw new Error(`Could not create ${config.developmentBranch} from the baseline commit.`);
   }
   unlinkSync(stateFile);
-  deps.output(`Baseline committed on ${config.productionBranch}; ${config.developmentBranch} now points to that commit. Checked out ${config.developmentBranch}. No remote was created or pushed.`);
+  const nextStep = git.remote
+    ? `Перевір репозиторій командою git remote -v. Якщо origin веде на репозиторій магазину, наступні команди:
+  git push -u origin ${config.productionBranch}
+  git push -u origin ${config.developmentBranch}`
+    : `Створи окремий порожній GitHub-репозиторій магазину, потім виконай:
+  git remote add origin https://github.com/OWNER/CLIENT-REPO.git
+  git remote -v
+Після перевірки origin відправ baseline командами:
+  git push -u origin ${config.productionBranch}
+  git push -u origin ${config.developmentBranch}`;
+  deps.output(`Baseline committed on ${config.productionBranch}; ${config.developmentBranch} now points to that commit. Checked out ${config.developmentBranch}. No remote was created or pushed.\n\n${nextStep}`);
 }
 
 function isSensitivePath(file: string): boolean {

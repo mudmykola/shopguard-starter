@@ -45,3 +45,7 @@ Title: Make the linked `sgd` command executable after build. The TypeScript outp
 ## 2026-11-09 19:35 — Improvement
 
 Title: Clarify starter cloning, Shopify setup, and Git remotes. README now contrasts GitHub Template with directly cloning the starter, explains why `sgd init` blocks an `origin` pointing to the starter, documents the safe `origin` → `starter` rename for an existing clone, and explains that `sgd configure` is create-only when `.shopguard/project.json` already exists. Validation: `git diff --check` passes. Module: Documentation/README. Issue: #8.
+
+## 2026-11-09 19:50 — Improvement
+
+Title: Guide first-run setup and reduce command memorization. Added `npm run bootstrap` to install, check, and link the CLI in one command. Repeated `sgd configure` for the same store now keeps the existing config and prints `sgd init`; changing to another store fails safely with an explicit WebStorm instruction. The starter-origin error now gives the exact `git remote rename origin starter` recovery, and `sgd init` prints the next HTTPS `origin` and push commands without executing them. README documents the guided sequence. Validation: `npm run check` passes (48 tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify store or Git remote action was performed. Module: CLI/config/README. Issue: #8.

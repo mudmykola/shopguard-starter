@@ -92,6 +92,7 @@ function ukrainianError(message: string): string {
     ['Working tree has local changes.', 'У робочому дереві є локальні зміни.'],
     ['No client Git repository/origin configured.', 'Git-репозиторій клієнта або origin не налаштовано.'],
     ['No client origin configured', 'Origin клієнтського репозиторію не налаштовано'],
+    ['This checkout still points to the ShopGuard starter. Create a separate client repository from the GitHub template and clone it over HTTPS.', 'Ця папка під’єднана до ShopGuard Starter. Щоб продовжити в цій папці, виконай `git remote rename origin starter`, перевір `git remote -v`, а тоді запусти `sgd init`. Це лише змінить локальну назву remote — push не виконується.'],
     ['Store verification was not confirmed.', 'Перевірку магазину не підтверджено.'],
     ['Development was not confirmed.', 'Розробку не підтверджено.'],
     ['Shopify pull was not confirmed.', 'Завантаження теми Shopify не підтверджено.'],
@@ -113,9 +114,19 @@ async function main(): Promise<void> {
     const store = value('--store');
     if (!store) fail('configure requires --store <store.myshopify.com>');
     const config = validateConfig({ store, mode: value('--mode') ?? 'existing', authAlias: value('--auth-alias'), themeId: value('--theme-id'), themeRole: value('--theme-role'), productionBranch: value('--production-branch') ?? 'master', developmentBranch: value('--development-branch') ?? 'dev', ...(has('--manual-unconnected') ? { github: { connected: false } } : {}) });
-    mkdirSync(join(root, '.shopguard'), { recursive: true });
+    const configDirectory = join(root, '.shopguard');
+    const configPath = join(configDirectory, 'project.json');
+    mkdirSync(configDirectory, { recursive: true });
+    if (existsSync(configPath)) {
+      const existing = loadConfig(root);
+      if (existing.store !== config.store) {
+        fail(`Цей проєкт уже налаштовано для ${existing.store}. Наявний конфіг не змінено. Щоб змінити магазин, перевір проєкт і відредагуй ${configPath} у WebStorm.`);
+      }
+      console.log(`Магазин ${config.store} уже налаштовано; наявні параметри збережено. Наступна команда: sgd init`);
+      return;
+    }
     saveConfig(root, config);
-    console.log(`Created ${join(root, '.shopguard', 'project.json')} for ${config.store}. Review it, then run sgd init.`);
+    console.log(`Створено ${configPath} для ${config.store}. Наступна команда: sgd init`);
     return;
   }
   if (command === 'init') {

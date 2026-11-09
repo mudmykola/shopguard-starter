@@ -103,6 +103,7 @@ function fakeStagingShopify(root, remote, { decline = false, driftAfterReview = 
 function fakeWorkflow({ output = liveThemes(), failList = false, promptResults = [true, true, true, true, true], pullTree = true, chooseSourceThemeId = '123' } = {}) {
   const calls = [];
   const prompts = [];
+  const outputs = [];
   let promptIndex = 0;
   const runner = (command, args, cwd) => {
     calls.push({ command, args, cwd });
@@ -134,7 +135,7 @@ function fakeWorkflow({ output = liveThemes(), failList = false, promptResults =
     promptIndex += 1;
     return result;
   };
-  return { calls, prompts, run: runner, prompt, chooseSourceTheme: async () => chooseSourceThemeId || undefined, output() {} };
+  return { calls, prompts, outputs, run: runner, prompt, chooseSourceTheme: async () => chooseSourceThemeId || undefined, output(message) { outputs.push(message); } };
 }
 
 test('1. Store config rejects URLs, paths, uppercase and suspicious domains', () => {
@@ -213,6 +214,29 @@ test('13. Client repositories require HTTPS and cannot point to the starter', ()
   assert.throws(() => guardClientRepository('https://github.com/mudmykola/shopguard-starter.git'), /starter/);
   assert.throws(() => guardClientRepository('git@github.com:owner/client.git'), /HTTPS/);
 });
+test('13a. Configure can be repeated for the same store without overwriting the existing file', () => {
+  const root = tempDir(); const cli = join(process.cwd(), 'dist/cli.js');
+  const configure = (store) => spawnSync(process.execPath, [cli, 'configure', '--store', store, '--path', root], { encoding: 'utf8' });
+  try {
+    assert.equal(configure(storeA).status, 0);
+    const file = join(root, '.shopguard/project.json'); const original = readFileSync(file, 'utf8');
+    const repeat = configure(storeA);
+    assert.equal(repeat.status, 0); assert.match(repeat.stdout, /Наступна команда: sgd init/); assert.equal(readFileSync(file, 'utf8'), original);
+    const otherStore = configure(storeB);
+    assert.notEqual(otherStore.status, 0); assert.match(otherStore.stderr, /проєкт уже налаштовано/); assert.equal(readFileSync(file, 'utf8'), original);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('13b. Init explains how to rename the starter remote before retrying', () => {
+  const root = clientRepo();
+  try {
+    git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']);
+    const cli = join(process.cwd(), 'dist/cli.js');
+    const result = spawnSync(process.execPath, [cli, 'init', '--path', root], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /git remote rename origin starter/);
+    assert.match(result.stderr, /sgd init/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('14. Full mocked init pulls Live locally and creates master/dev at the same baseline', async () => {
   const root = clientRepo(); const deps = fakeWorkflow();
   try {
@@ -225,6 +249,17 @@ test('14. Full mocked init pulls Live locally and creates master/dev at the same
     assert.ok(deps.calls.every((call) => call.command !== 'git' || !call.args.some((arg) => arg.includes('push'))));
     assert.ok(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'list' && call.args.includes(storeA)));
     assert.ok(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'pull' && call.args.includes('123')));
+    assert.ok(deps.outputs.some((message) => message.includes('git remote -v') && message.includes('git push -u origin master')));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('14c. Init gives exact client-origin commands when the starter remote has been renamed', async () => {
+  const root = clientRepo(); const deps = fakeWorkflow();
+  try {
+    git(root, ['remote', 'rename', 'origin', 'starter']);
+    await initProject(root, config(), { ...deps, tempRoot: root });
+    assert.ok(deps.outputs.some((message) => message.includes('git remote add origin https://github.com/OWNER/CLIENT-REPO.git')));
+    assert.ok(deps.outputs.some((message) => message.includes('git push -u origin master') && message.includes('git push -u origin dev')));
+    assert.deepEqual(git(root, ['remote']).split('\n'), ['starter']);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test('14b. Init lets the operator choose an unpublished source without changing the manual push target', async () => {
