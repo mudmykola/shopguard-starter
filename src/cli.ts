@@ -1,29 +1,270 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
+import { stdin, stdout } from 'node:process';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { checkProject, findRoot, gitState, guardPush, initLocal, isTheme, listFiles, loadConfig, preflight, run, setupLocal, shopifyArgs, validateConfig } from './core.js';
+import {
+  checkProject,
+  changedThemeFiles,
+  findRoot,
+  gitState,
+  guardClientRepository,
+  guardPush,
+  isTheme,
+  listFiles,
+  loadConfig,
+  parseThemeList,
+  preflight,
+  planThemeImport,
+  importNewFiles,
+  pullArgs,
+  remoteThemeArgs,
+  remotePreflight,
+  run,
+  saveConfig,
+  setupLocal,
+  shopifyCommandArgs,
+  validateConfig,
+} from './core.js';
+import { initProject } from './workflow.js';
 
-const args = process.argv.slice(2); const command = args[0] ?? '--help';
+const args = process.argv.slice(2);
+const command = args[0] ?? '--help';
 const value = (flag: string): string | undefined => { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; };
 const has = (flag: string): boolean => args.includes(flag);
-const help = () => console.log(`sgd 0.2.0\n\nCommands:\n  init       plan or create a local project\n  setup      add idempotent starter tooling\n  status     show project and integration state\n  doctor     read-only local diagnostics\n  dev        guarded development-theme dry run\n  sync       inspect Git synchronization\n  pull       preview an isolated theme snapshot\n  push       guarded manual staging check\n  preflight  release and protected-file checks\n  lint       offline structural lint\n  format     list selected files\n  check      run read-only quality gates`);
+const help = () => console.log(`sgd 0.3.0
+
+Commands:
+  configure  create .shopguard/project.json for this client project
+  init       import an existing Live theme or create a new skeleton
+  setup      add quality tooling without overwriting existing files
+  status     show project and integration state
+  doctor     read-only local diagnostics
+  dev        start a confirmed development-theme upload
+  sync       fetch refs and safely fast-forward the current branch
+  pull       preview a remote-theme snapshot; optionally import new files
+  push       fail-closed until remote drift/recovery checks exist
+  preflight  release and protected-file checks
+  lint       run Theme Check and configured project linters
+  format     format changed theme files only
+  check      run read-only quality gates`);
+
+function createPrompt(): (message: string, expected: string) => Promise<boolean> {
+  return async (message, expected) => {
+    if (!stdin.isTTY) return false;
+    const terminal = createInterface({ input: stdin, output: stdout });
+    try { return (await terminal.question(`${message}\nType exactly: ${expected}\n> `)).trim() === expected; }
+    finally { terminal.close(); }
+  };
+}
+
 function rootFromArg(): string { return resolve(value('--path') ?? process.cwd()); }
 function projectRoot(): string { return findRoot(rootFromArg()); }
 function fail(message: string): never { throw new Error(message); }
 
-try {
-  if (command === '--help' || command === '-h') help();
-  else if (command === '--version' || command === '-v') console.log('0.2.0');
-  else if (command === 'init') { const root = rootFromArg(); const store = value('--store'); if (!store) fail('init requires --store <store.myshopify.com>'); const config = validateConfig({ store, mode: value('--mode') ?? 'existing', authAlias: value('--auth-alias'), themeRole: value('--theme-role') ?? 'unpublished', productionBranch: value('--production-branch') ?? 'master', developmentBranch: value('--development-branch') ?? 'dev' }); const result = initLocal(root, config, has('--mock')); console.log(`Plan:\n${result.plan.map((item) => `- ${item}`).join('\n')}`); if (!has('--mock')) console.log('No files changed. Add --mock to create local fixtures; Shopify and GitHub are never contacted.'); else console.log(`Created:\n${result.created.map((item) => `- ${item}`).join('\n')}`); }
-  else if (command === 'setup') { const root = projectRoot(); const created = setupLocal(root); if (created.length) console.log(`Created:\n${created.map((file) => `- ${file}`).join('\n')}`); else console.log('Setup is already up to date; no files changed.'); }
-  else if (command === 'status') { const root = projectRoot(); const config = loadConfig(root); const git = gitState(root); console.log(`Project: ${root}\nStore: ${config.store}\nTheme: ${config.themeId ?? 'unverified'}\nBranch: ${git.branch}\nOrigin: ${git.remote || 'not configured'}\nStore access: unverified\nGitHub integration: ${config.github?.connected ? 'configured' : 'pending'}\nProduction integration: pending`); }
-  else if (command === 'doctor') { const root = rootFromArg(); for (const [tool, toolArgs] of [['node', ['--version']], ['git', ['--version']], ['shopify', ['version']]] as [string, string[]][]) { const result = run(tool, toolArgs, root, true); console.log(`${tool}: ${result.ok ? result.output.trim().split('\n')[0] : 'unavailable'}`); } console.log(`Project: ${root}\nTheme structure: ${isTheme(root) ? 'detected' : 'not detected'}\nStore access: unverified (no network request)`); }
-  else if (command === 'dev') { const root = projectRoot(); const config = loadConfig(root); if (config.themeRole === 'live') fail('Refusing development on Live theme'); const commandArgs = [...shopifyArgs(config, 'theme dev'), '--theme', config.themeId ?? 'development']; console.log(run('shopify', commandArgs, root, false).output); console.log('No remote mutation performed.'); }
-  else if (command === 'sync') { const root = projectRoot(); const git = gitState(root); console.log(has('--check') ? `Git sync check: branch=${git.branch}, dirty=${git.dirty}, origin=${git.remote || 'missing'}` : 'Sync is read-only by default. Use --check for a fetch plan; no rebase, reset, stash or force-push is performed.'); }
-  else if (command === 'pull') { const root = projectRoot(); const config = loadConfig(root); const snapshot = join(root, '.shopguard', 'snapshots', `${Date.now()}`); mkdirSync(snapshot, { recursive: true }); writeFileSync(join(snapshot, 'README.txt'), `Isolated preview for ${config.store}; no local files overwritten.\n`); console.log(`Preview snapshot: ${snapshot}\nNo local overwrite performed.`); }
-  else if (command === 'push') { const root = projectRoot(); const config = loadConfig(root); const git = gitState(root); guardPush(config, git.remote, config.themeRole === 'live'); fail('Manual push is disabled in this offline MVP; review the preview and use the approved Shopify workflow manually.'); }
-  else if (command === 'preflight') { const result = preflight(projectRoot()); console.log(`Dirty: ${result.dirty}\nProtected files: ${result.protectedFiles.length ? result.protectedFiles.join(', ') : 'none'}\nIssues: ${result.issues.length ? result.issues.join('; ') : 'none'}`); if (result.issues.length) process.exitCode = 1; }
-  else if (command === 'lint' || command === 'check') { const errors = checkProject(projectRoot()); console.log(errors.length ? errors.join('\n') : 'Structural checks passed'); if (errors.length) process.exitCode = 1; }
-  else if (command === 'format') { const root = projectRoot(); const files = listFiles(root).filter((file) => /\.(liquid|css|js|ts|json)$/.test(file) && !file.startsWith('dist/')); console.log(files.length ? `Selected files:\n${files.join('\n')}` : 'No selected files'); }
-  else fail(`Command not implemented: ${command}`);
-} catch (error) { console.error(`sgd: ${error instanceof Error ? error.message : 'Unexpected error'}`); process.exitCode = 1; }
+async function main(): Promise<void> {
+  if (command === '--help' || command === '-h') return help();
+  if (command === '--version' || command === '-v') return console.log('0.3.0');
+  if (command === 'configure') {
+    const root = rootFromArg();
+    const store = value('--store');
+    if (!store) fail('configure requires --store <store.myshopify.com>');
+    const config = validateConfig({ store, mode: value('--mode') ?? 'existing', authAlias: value('--auth-alias'), productionBranch: value('--production-branch') ?? 'master', developmentBranch: value('--development-branch') ?? 'dev' });
+    mkdirSync(join(root, '.shopguard'), { recursive: true });
+    saveConfig(root, config);
+    console.log(`Created ${join(root, '.shopguard', 'project.json')} for ${config.store}. Review it, then run sgd init.`);
+    return;
+  }
+  if (command === 'init') {
+    const root = findRoot(rootFromArg());
+    const config = loadConfig(root);
+    if (has('--plan')) {
+      const state = gitState(root);
+      guardClientRepository(state.remote);
+      const stages = config.mode === 'new'
+        ? '1. Download Shopify skeleton to an isolated temporary folder\n2. Preview import\n3. Copy new files only'
+        : '1. Read-only theme list\n2. Confirm the unique Live theme\n3. Pull to a fresh isolated temporary folder\n4. Preview writes and preserve conflicts\n5. Copy new files only';
+      console.log(`Plan for ${config.store}:\n${stages}\nGit: ${state.inside ? `${state.branch}; origin=${state.remote || 'none'}` : 'not initialized'}\nNo remote writes or Live theme changes.`);
+      return;
+    }
+    await initProject(root, config, { run: (bin, binArgs, cwd) => run(bin, binArgs, cwd, true), prompt: createPrompt(), output: console.log });
+    return;
+  }
+  if (command === 'setup') {
+    const root = projectRoot();
+    const created = setupLocal(root);
+    console.log(created.length ? `Created:\n${created.map((file) => `- ${file}`).join('\n')}` : 'Setup is already up to date; no files changed.');
+    return;
+  }
+  if (command === 'status') {
+    const root = projectRoot(); const config = loadConfig(root); const git = gitState(root);
+    console.log(`Project: ${root}\nStore: ${config.store}\nLive baseline: ${config.liveThemeId ?? 'not imported'}\nBranch: ${git.branch}\nOrigin: ${git.remote || 'not configured'}\nStore access: unverified (run sgd doctor --verify-store)\nGitHub theme connection: ${config.github?.connected ? 'configured, not verified' : 'pending'}\nProduction integration: pending`);
+    return;
+  }
+  if (command === 'doctor') {
+    const root = rootFromArg();
+    for (const [tool, toolArgs] of [['node', ['--version']], ['git', ['--version']], ['shopify', ['version']]] as [string, string[]][]) {
+      const result = run(tool, toolArgs, root, true);
+      console.log(`${tool}: ${result.ok ? result.output.trim().split('\n')[0] : 'unavailable'}`);
+    }
+    try { const project = findRoot(root); const config = loadConfig(project); console.log(`Project: ${project}\nStore: ${config.store}\nTheme structure: ${isTheme(project) ? 'detected' : 'not detected'}`); }
+    catch { console.log('Project config: not initialized'); }
+    if (has('--verify-store')) {
+      const project = findRoot(root); const config = loadConfig(project);
+      if (!await createPrompt()(`This sends a read-only theme list request to ${config.store}.`, `LIST ${config.store}`)) fail('Store verification was not confirmed.');
+      const result = run('shopify', shopifyCommandArgs(config, ['theme', 'list', '--json', '--path', project]), project, true);
+      if (!result.ok) fail(`Store access not verified for ${config.store}. Sign in manually; ShopGuard did not log out.`);
+      const themes = parseThemeList(result.output, config.store); console.log(`Store access verified for ${config.store}; ${themes.length} themes returned.`);
+    }
+    return;
+  }
+  if (command === 'dev') {
+    const root = projectRoot(); const config = loadConfig(root);
+    if (config.themeRole === 'live') fail('Refusing development on a Live theme');
+    const devArgs = shopifyCommandArgs(config, ['theme', 'dev', '--path', root]);
+    const listed = run('shopify', remoteThemeArgs(config), root, true);
+    if (!listed.ok) fail(`Could not verify themes for ${config.store}; development was not started. ${listed.output}`);
+    parseThemeList(listed.output, config.store);
+    console.log(`Target store verified: ${config.store}. Shopify CLI may upload the current theme to a development theme.\nshopify ${devArgs.join(' ')}`);
+    if (!await createPrompt()(`Start Shopify development for ${config.store}?`, `DEV ${config.store}`)) fail('Development was not confirmed.');
+    const result = run('shopify', devArgs, root, true);
+    if (!result.ok) fail(`Shopify development failed. ${result.output}`);
+    console.log(result.output);
+    return;
+  }
+  if (command === 'sync') {
+    const root = projectRoot(); const git = gitState(root);
+    if (!git.inside || !git.remote) fail('No client Git repository/origin configured.');
+    guardClientRepository(git.remote);
+    if (git.dirty && !has('--check')) fail('Working tree is dirty; commit or review local changes before fast-forward.');
+    const expectation = has('--check') ? `FETCH ${git.remote}` : `SYNC ${git.branch}`;
+    if (!await createPrompt()(`Fetch refs from ${git.remote}${has('--check') ? ' and inspect divergence' : `, then fast-forward ${git.branch} only if possible`}.`, expectation)) fail('Git synchronization was not confirmed.');
+    const fetched = run('git', ['fetch', '--prune', 'origin'], root, true);
+    if (!fetched.ok) fail(`Git fetch failed: ${fetched.output}`);
+    const branches = [...new Set([git.branch, loadConfig(root).productionBranch, loadConfig(root).developmentBranch])];
+    for (const branch of branches) {
+      const counts = run('git', ['rev-list', '--left-right', '--count', `${branch}...origin/${branch}`], root, true);
+      if (!counts.ok) { console.log(`${branch}: no remote tracking branch origin/${branch}`); continue; }
+      const [ahead = '0', behind = '0'] = counts.output.trim().split(/\s+/);
+      console.log(`${branch}: local ahead ${ahead}, remote ahead ${behind}`);
+      if (!has('--check') && branch === git.branch) {
+        if (Number(ahead) > 0 && Number(behind) > 0) fail(`${branch} has diverged; refusing automatic merge/rebase.`);
+        if (Number(behind) > 0) {
+          const merged = run('git', ['merge', '--ff-only', `origin/${branch}`], root, true);
+          if (!merged.ok) fail(`Fast-forward failed: ${merged.output}`);
+          console.log(`Fast-forwarded ${branch}.`);
+        }
+      }
+    }
+    return;
+  }
+  if (command === 'pull') {
+    const root = projectRoot(); const config = loadConfig(root);
+    const git = gitState(root);
+    if (git.dirty) fail('Working tree is dirty; commit or review local changes before importing a Shopify snapshot.');
+    const target = value('--theme') ?? config.liveThemeId;
+    if (!target) fail('pull requires --theme <id> or an imported liveThemeId in project.json');
+    const listed = run('shopify', remoteThemeArgs(config), root, true);
+    if (!listed.ok) fail(`Could not verify themes for ${config.store}; pull stopped. ${listed.output}`);
+    const theme = parseThemeList(listed.output, config.store).find((item) => item.id === target);
+    if (!theme) fail(`Theme ${target} is not present in the current theme list for ${config.store}.`);
+    if (theme.role === 'development') fail('Refusing to use a transient development theme as a snapshot source.');
+    const base = join(root, '.shopguard', 'snapshots');
+    mkdirSync(base, { recursive: true });
+    const snapshot = mkdtempSync(join(base, 'remote-'));
+    const commandArgs = pullArgs(config, target, snapshot);
+    console.log(`Verified source: ${theme.name} (${theme.role}), ${config.store}. Snapshot: ${snapshot}\nshopify ${commandArgs.join(' ')}`);
+    if (!await createPrompt()(`Download this remote theme into an isolated ignored snapshot?`, `PULL ${target}`)) fail('Shopify pull was not confirmed.');
+    const downloaded = run('shopify', commandArgs, root, true);
+    if (!downloaded.ok) fail(`Shopify pull failed: ${downloaded.output}`);
+    const preview = planThemeImport(snapshot, root);
+    console.log(`Snapshot preview: ${preview.added.length} new files; ${preview.conflicts.length} existing files preserved.${preview.protectedConflicts.length ? ` Protected conflicts: ${preview.protectedConflicts.join(', ')}` : ''}`);
+    if (has('--preview')) return;
+    const selected = value('--files')?.split(',').map((file) => file.trim()).filter(Boolean) ?? [];
+    if (!selected.length) { console.log(`Review snapshot at ${snapshot}; rerun with --files <comma-separated-paths> to import selected new files.`); return; }
+    const invalid = selected.filter((file) => !preview.added.includes(file));
+    if (invalid.length) fail(`Only new files may be imported; conflicts or unknown paths: ${invalid.join(', ')}`);
+    if (!await createPrompt()(`Import ${selected.length} selected files; existing files will remain untouched?`, `IMPORT ${config.store}`)) fail('Snapshot import was not confirmed.');
+    importNewFiles(snapshot, root, selected);
+    console.log(`Imported ${selected.length} files from ${theme.name}.`);
+    return;
+  }
+  if (command === 'push') {
+    const root = projectRoot(); const config = loadConfig(root); const git = gitState(root);
+    guardPush(config, git.remote, config.themeRole === 'live');
+    fail('Shopify theme upload is disabled until target role and remote baseline verification are implemented.');
+  }
+  if (command === 'preflight') {
+    const root = projectRoot(); const config = loadConfig(root);
+    const result = preflight(root);
+    console.log(`Dirty: ${result.dirty}\nProtected files: ${result.protectedFiles.length ? result.protectedFiles.join(', ') : 'none'}\nIssues: ${result.issues.length ? result.issues.join('; ') : 'none'}`);
+    let issues = [...result.issues];
+    if (has('--fetch')) {
+      const git = gitState(root);
+      if (!git.remote) fail('No client origin configured for remote preflight.');
+      guardClientRepository(git.remote);
+      if (!await createPrompt()(`Fetch ${git.remote} to compare production/development branches and merchant JSON drift.`, 'FETCH origin')) fail('Remote preflight fetch was not confirmed.');
+      const fetched = run('git', ['fetch', 'origin'], root, true);
+      if (!fetched.ok) fail(`Remote preflight fetch failed: ${fetched.output}`);
+      const remote = remotePreflight(root, config.productionBranch, config.developmentBranch);
+      for (const branch of remote.branches) {
+        console.log(`${branch.name}: local ahead ${branch.ahead}, remote ahead ${branch.behind}; remote protected JSON: ${branch.protectedFiles.join(', ') || 'none'}`);
+        if (branch.protectedFiles.length) issues.push(`${branch.name} has remote merchant-managed JSON changes`);
+      }
+      console.log(`Protected JSON difference ${config.developmentBranch} → ${config.productionBranch}: ${remote.releaseProtectedFiles.join(', ') || 'none'}`);
+      if (remote.releaseProtectedFiles.length) issues.push('Production/development differ on protected merchant-managed JSON');
+      issues.push(...remote.issues);
+      if (issues.length) console.log(`Preflight findings: ${issues.join('; ')}`);
+    } else console.log('Remote commits were not fetched; use --fetch for GitHub branch and Shopify-originated change checks.');
+    if (issues.length) process.exitCode = 1;
+    return;
+  }
+  if (command === 'lint' || command === 'check') {
+    const root = projectRoot();
+    const errors = checkProject(root);
+    if (errors.length) fail(errors.join('\n'));
+    const checks: [string, string[]][] = [];
+    if (isTheme(root)) checks.push(['shopify', ['theme', 'check', '--path', root, '--no-input']]);
+    if (existsSync(join(root, 'eslint.config.js')) || existsSync(join(root, 'eslint.config.mjs')) || existsSync(join(root, '.eslintrc.json'))) {
+      if (existsSync(join(root, 'node_modules/.bin/eslint'))) checks.push(['npx', ['--no-install', 'eslint', '.']]);
+      else console.log('ESLint config found but dependency is missing; install it in this theme project to enable the check.');
+    }
+    const cssFiles = listFiles(root).filter((file) => /\.(css|scss)$/.test(file) && !/^(dist|node_modules|\.shopguard)\//.test(file));
+    if (cssFiles.length && (existsSync(join(root, 'stylelint.config.js')) || existsSync(join(root, 'stylelint.config.mjs')) || existsSync(join(root, '.stylelintrc.json')))) {
+      if (existsSync(join(root, 'node_modules/.bin/stylelint'))) checks.push(['npx', ['--no-install', 'stylelint', ...cssFiles]]);
+      else console.log('Stylelint config found but dependency is missing; install it in this theme project to enable the check.');
+    }
+    for (const [tool, toolArgs] of checks) {
+      const result = run(tool, toolArgs, root, true);
+      console.log(result.output);
+      if (!result.ok) fail(`${tool} quality check failed.`);
+    }
+    console.log(`ShopGuard config and theme structure passed${checks.length ? `; ${checks.length} tool check(s) passed` : '; no optional linter configs found'}.`);
+    return;
+  }
+  if (command === 'format') {
+    const root = projectRoot();
+    const files = changedThemeFiles(root);
+    if (!files.length) { console.log('No changed theme files to format.'); return; }
+    const forwarded = value('--files')?.split(',').map((file) => file.trim()).filter(Boolean);
+    const selected = forwarded?.length ? files.filter((file) => forwarded.includes(file)) : files;
+    if (forwarded?.some((file) => !selected.includes(file))) fail('Format accepts changed theme files only.');
+    if (has('--check')) {
+      const checked = run('npx', ['--no-install', 'prettier', '--check', ...selected], root, true);
+      console.log(checked.output);
+      if (!checked.ok) fail('Formatting check failed or Prettier is not installed. Run sgd setup first.');
+    } else {
+      const formatted = run('npx', ['--no-install', 'prettier', '--write', ...selected], root, true);
+      console.log(formatted.output);
+      if (!formatted.ok) fail('Formatting failed or Prettier is not installed. Run sgd setup first.');
+    }
+    return;
+  }
+  fail(`Unknown command: ${command}`);
+}
+
+main().catch((error: unknown) => {
+  console.error(`sgd: ${error instanceof Error ? error.message : 'Unexpected error'}`);
+  process.exitCode = 1;
+});

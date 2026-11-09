@@ -1,0 +1,8 @@
+.github/
+docs/
+src/
+test/
+eslint.config.mjs
+stylelint.config.mjs
+tsconfig.json
+SHOPGUARD_PRIVATE_STARTER_AGENT.md

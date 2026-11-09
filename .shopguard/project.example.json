@@ -1,0 +1,6 @@
+{
+  "store": "client.myshopify.com",
+  "mode": "existing",
+  "productionBranch": "master",
+  "developmentBranch": "dev"
+}

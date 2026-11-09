@@ -9,7 +9,9 @@ dist/
 .aws/
 .npmrc
 .shopguard/auth/
+.shopguard/project.json
 .shopguard/session/
+.shopguard/init-state.json
 .shopguard/backups/
 .shopguard/cache/
 .shopguard/snapshots/
