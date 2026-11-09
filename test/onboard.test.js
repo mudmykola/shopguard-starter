@@ -1,6 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { parseStoreArgument, runOnboarding } from '../scripts/onboard.js';
+
+test('npm start entrypoint loads before dependencies are installed', () => {
+  const coldCheckout = mkdtempSync(join(tmpdir(), 'shopguard-cold-start-'));
+  try {
+    writeFileSync(join(coldCheckout, 'package.json'), '{"type":"module"}');
+    copyFileSync(new URL('../scripts/onboard.js', import.meta.url), join(coldCheckout, 'onboard.js'));
+    const result = spawnSync(process.execPath, ['onboard.js'], { cwd: coldCheckout, encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Вкажи магазин/);
+    assert.doesNotMatch(result.stderr, /ERR_MODULE_NOT_FOUND/);
+  } finally {
+    rmSync(coldCheckout, { recursive: true, force: true });
+  }
+});
 
 test('npm start requires a valid Shopify store domain', () => {
   assert.equal(parseStoreArgument(['--store', 'my-store.myshopify.com']), 'my-store.myshopify.com');

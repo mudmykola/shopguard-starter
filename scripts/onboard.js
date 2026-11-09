@@ -1,8 +1,46 @@
 import { spawn } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ora from 'ora';
-import pc from 'picocolors';
+
+// This entrypoint runs before `npm ci`, so it must not import project dependencies.
+const supportsColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+const style = (code, value) => supportsColor ? `\u001B[${code}m${value}\u001B[0m` : value;
+const pc = {
+  bold: (value) => style('1', value),
+  cyan: (value) => style('36', value),
+  dim: (value) => style('2', value),
+  green: (value) => style('32', value),
+  red: (value) => style('31', value),
+  yellow: (value) => style('33', value),
+};
+
+function ora({ text }) {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let frame = 0;
+  let interval;
+  const interactive = Boolean(process.stdout.isTTY);
+  const stop = (icon, message, color) => {
+    if (interval) clearInterval(interval);
+    if (interactive) process.stdout.write(`\r\u001B[2K${color(icon)} ${message}\n`);
+  };
+  return {
+    start() {
+      if (interactive) {
+        process.stdout.write(`${pc.cyan(frames[frame])} ${text}`);
+        interval = setInterval(() => {
+          frame = (frame + 1) % frames.length;
+          process.stdout.write(`\r\u001B[2K${pc.cyan(frames[frame])} ${text}`);
+        }, 80);
+        interval.unref?.();
+      } else {
+        console.log(`… ${text}`);
+      }
+      return this;
+    },
+    succeed(message) { stop('✔', message, pc.green); return this; },
+    fail(message) { stop('✖', message, pc.red); return this; },
+  };
+}
 
 export function parseStoreArgument(args) {
   const index = args.indexOf('--store');

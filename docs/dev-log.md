@@ -69,3 +69,7 @@ Title: Polish the interactive CLI and show live progress. Replaced copy/paste co
 ## 2026-11-09 20:51 — Fix
 
 Title: Avoid secret-scanner false positive in redaction test. GitHub Push Protection identified the test's literal fake Shopify token as a credential. The fixture now assembles the token from two strings at runtime, preserving the redaction assertion without embedding a token-shaped value in the source. Validation: `npm run check` passes (55 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. Module: CLI tests. Issue: #8.
+
+## 2026-11-09 20:53 — Fix
+
+Title: Allow first-run onboarding before npm dependencies exist. Removed external `ora` and `picocolors` imports from `scripts/onboard.js`; it now uses a small built-in colored spinner so `npm start` can run on a fresh clone before `npm ci`. Added a cold-checkout regression test. Validation: `npm run check` passes (56 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. Module: CLI/onboarding. Issue: #8.
