@@ -41,3 +41,7 @@ Title: Choose a Shopify source theme and keep it separate from upload targets. `
 ## 2026-11-09 18:53 — Fix
 
 Title: Make the linked `sgd` command executable after build. The TypeScript output was created with mode `0644`, so the global npm link failed with `zsh: permission denied`. The build now sets `dist/cli.js` to executable on macOS/Linux and leaves Windows behavior unchanged; README setup notes explain this. Added a Unix permission regression test. Validation: `npm run check` passes (45 tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `./dist/cli.js --help` runs and shows CLI help; `git diff --check` passes. `npm audit` could not reach `registry.npmjs.org`; no dependency updates were made. Module: CLI/build. Issue: #7. No commit or push was made.
+
+## 2026-11-09 19:35 — Improvement
+
+Title: Clarify starter cloning, Shopify setup, and Git remotes. README now contrasts GitHub Template with directly cloning the starter, explains why `sgd init` blocks an `origin` pointing to the starter, documents the safe `origin` → `starter` rename for an existing clone, and explains that `sgd configure` is create-only when `.shopguard/project.json` already exists. Validation: `git diff --check` passes. Module: Documentation/README. Issue: #8.

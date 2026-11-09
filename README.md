@@ -14,13 +14,47 @@
 
 ## 🚀 Створити робочий проєкт
 
-1. У GitHub виберіть **Use this template** і створіть окремий репозиторій для теми магазину. Для коду клієнта рекомендуємо приватний доступ.
-2. Клонуйте новий репозиторій. Не працюйте безпосередньо в клоні `shopguard-starter`.
-3. Установіть залежності й CLI:
+`shopguard-starter` — це джерело шаблону. Репозиторій теми магазину має бути окремим. Якщо просто клонувати стартер, його `origin` вказуватиме на `mudmykola/shopguard-starter`, і `sgd init` навмисно зупиниться, щоб не допустити роботи з кодом магазину в репозиторії стартера.
+
+### Рекомендований спосіб: GitHub Template
+
+1. На сторінці стартера вибери **Use this template → Create a new repository**. Створи окремий репозиторій для теми магазину; для клієнтського коду рекомендуємо приватний доступ.
+2. Клонуй саме новий репозиторій через HTTPS і перевір адресу `origin`:
+
+   ```bash
+   git clone https://github.com/OWNER/CLIENT-REPO.git
+   cd CLIENT-REPO
+   git remote -v
+   ```
+
+   `origin` має вести на `CLIENT-REPO`, а не на `shopguard-starter`.
+
+### Якщо вже клонували сам стартер
+
+Можна залишитися в цій папці й спершу підключити Shopify. Перейменуй remote стартера, щоб він не був `origin`:
 
 ```bash
-git clone https://github.com/OWNER/CLIENT-REPO.git
-cd CLIENT-REPO
+git remote -v
+git remote rename origin starter
+git remote -v
+```
+
+Після цього `origin` відсутній, а `starter` зберігає адресу шаблону. Запусти `sgd init`: файли теми та baseline залишаться локальними, нічого не відправиться в GitHub. Коли ініціалізація завершиться, створи **порожній** GitHub-репозиторій магазину (без README, license чи `.gitignore`) і додай його:
+
+```bash
+git remote add origin https://github.com/OWNER/CLIENT-REPO.git
+git remote -v
+git push -u origin master
+git push -u origin dev
+```
+
+Перед push перевір, що `origin` — репозиторій магазину, а `starter` — `mudmykola/shopguard-starter`.
+
+### Установити CLI та налаштувати магазин
+
+У робочій папці клієнтського проєкту встанови залежності й CLI:
+
+```bash
 npm ci
 npm run check
 npm link
@@ -28,13 +62,13 @@ npm link
 
 `npm run check` збирає CLI й налаштовує право запуску `sgd` на macOS/Linux. Після `npm link` команда доступна в терміналі.
 
-4. Укажіть домен магазину. Використовуйте адресу `назва-магазину.myshopify.com`, без `https://`:
+Укажи домен магазину. Використовуй адресу `назва-магазину.myshopify.com`, без `https://`:
 
 ```bash
 sgd configure --store назва-магазину.myshopify.com
 ```
 
-Налаштування збережеться в `.shopguard/project.json`. Файл ігнорується Git. Перевірте його, а потім запустіть початкове налаштування:
+`sgd configure` створює `.shopguard/project.json` один раз. Файл ігнорується Git. Якщо бачиш `EEXIST`, конфіг уже існує: не запускай `configure` повторно й не видаляй файл навмання. Перевір домен командою `sgd status` або відкрий конфіг у WebStorm. Після налаштування магазину запусти:
 
 ```bash
 sgd init
