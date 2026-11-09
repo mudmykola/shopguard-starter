@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,6 +16,11 @@ import { pushTheme, pushThemeBaseline } from '../dist/push.js';
 
 const storeA = 'alpha.myshopify.com';
 const storeB = 'beta.myshopify.com';
+test('compiled sgd entrypoint is executable on Unix', { skip: process.platform === 'win32' }, () => {
+  const { mode } = statSync(new URL('../dist/cli.js', import.meta.url));
+  assert.ok(mode & 0o111, 'dist/cli.js must have executable permissions for npm link');
+});
+
 const liveThemes = (store = storeA) => JSON.stringify([
   { id: 123, name: 'Published theme', role: 'main', shop: store },
   { id: 456, name: 'Unpublished copy', role: 'unpublished', shop: store },

@@ -26,6 +26,8 @@ npm run check
 npm link
 ```
 
+`npm run check` збирає CLI й налаштовує право запуску `sgd` на macOS/Linux. Після `npm link` команда доступна в терміналі.
+
 4. Укажіть домен магазину. Використовуйте адресу `назва-магазину.myshopify.com`, без `https://`:
 
 ```bash
