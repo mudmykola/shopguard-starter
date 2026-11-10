@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmationDetails, runWithSpinner } from '../dist/terminal-ui.js';
+import { confirmationDetails, numberedSelectionTheme, runWithSpinner } from '../dist/terminal-ui.js';
+
+test('interactive action and theme menus display numeric selection indexes', () => {
+  assert.equal(numberedSelectionTheme.indexMode, 'number');
+});
 
 test('confirmation summaries show the target and side effects without a copy-and-paste token', () => {
   const rename = confirmationDetails('RENAME STARTER REMOTE shop.myshopify.com');

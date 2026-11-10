@@ -5,6 +5,8 @@ import ora from 'ora';
 import pc from 'picocolors';
 import { redactOutput, safeEnvironment, type CommandResult, type ShopifyTheme } from './core.js';
 
+export const numberedSelectionTheme = { indexMode: 'number' as const };
+
 export function printWelcome(store?: string): void {
   console.log(`\n${pc.bold(pc.cyan('🛡️  ShopGuard'))} ${pc.dim('Shopify theme setup')}`);
   if (store) console.log(`${pc.dim('Магазин')} ${pc.bold(store)}`);
@@ -46,11 +48,12 @@ export async function confirmAction(message: string, action: string): Promise<bo
   console.log(`\n${pc.bold(message)}\n${pc.dim(`Деталі: ${confirmationDetails(action)}`)}`);
   try {
     return await select({
-      message: 'Вибери дію',
+      message: 'Вибери дію · цифра + Enter або стрілки + Enter',
       choices: [
         { name: '↩ Скасувати', value: false },
         { name: '✓ Продовжити', value: true },
       ],
+      theme: numberedSelectionTheme,
       loop: false,
     });
   } catch {
@@ -62,12 +65,13 @@ export async function chooseTheme(themes: ShopifyTheme[]): Promise<string | unde
   if (!stdin.isTTY || !stdout.isTTY) return undefined;
   try {
     return await select({
-      message: 'Тема-джерело · стрілки для вибору, Enter для продовження',
+      message: 'Тема-джерело · цифра + Enter або стрілки + Enter',
       choices: themes.map((theme) => ({
         name: `${theme.role === 'main' ? '🟢 Live' : '🟡 Unpublished'} · ${theme.name} · ID ${theme.id}`,
         value: theme.id,
         description: theme.role === 'main' ? 'Поточна опублікована тема; завантаження буде локальним' : 'Неопублікована тема; завантаження буде локальним',
       })),
+      theme: numberedSelectionTheme,
       loop: false,
     });
   } catch {

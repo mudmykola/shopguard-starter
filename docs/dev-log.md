@@ -81,3 +81,7 @@ Title: Separate ShopGuard tooling from Shopify-connected theme repositories. `np
 ## 2026-11-10 17:55 — Improvement
 
 Title: Allow local theme onboarding before creating a GitHub repository. `--repo` is now optional: without it, `npm start` creates a separate local `<store>-theme` workspace and initializes its theme-only `master` and `dev` branches; the user can attach an empty GitHub repository later. With `--repo`, onboarding clones that existing empty HTTPS repository. README documents both paths and the later `origin`/push commands. Validation: `npm run check` passes (59 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify store request, GitHub repository creation, push, commit or package publishing was performed. Module: CLI/onboarding/README. Issue: #8.
+
+## 2026-11-10 18:05 — Improvement
+
+Title: Add numeric shortcuts to interactive choices. Confirmation and source-theme menus now display numbered options; typing an option number selects it and Enter confirms, while arrow-key navigation remains available. Updated the Ukrainian README and added a regression test for numbered menu rendering. Validation: `npm run check` passes (60 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify request, GitHub repo creation, push, commit or package publishing was performed. Module: CLI/terminal UX. Issue: #8.
