@@ -6,6 +6,7 @@ import {
   checkProject,
   changedThemeFiles,
   diagnoseProject,
+  excludeLocalProjectState,
   findRoot,
   gitState,
   guardClientRepository,
@@ -82,7 +83,7 @@ function ukrainianError(message: string): string {
     ['Working tree has local changes.', 'У робочому дереві є локальні зміни.'],
     ['No client Git repository/origin configured.', 'Git-репозиторій клієнта або origin не налаштовано.'],
     ['No client origin configured', 'Origin клієнтського репозиторію не налаштовано'],
-    ['This checkout still points to the ShopGuard starter. Create a separate client repository from the GitHub template and clone it over HTTPS.', 'Ця папка під’єднана до ShopGuard Starter. Щоб продовжити в цій папці, виконай `git remote rename origin starter`, перевір `git remote -v`, а тоді запусти `sgd init`. Це лише змінить локальну назву remote — push не виконується.'],
+    ['This checkout still points to the ShopGuard starter. Create an empty client theme repository and run onboarding from the starter checkout.', 'Це репозиторій ShopGuard Starter, а не теми. Створи окремий порожній GitHub-репозиторій теми й запусти onboarding із папки стартера.'],
     ['Store verification was not confirmed.', 'Перевірку магазину не підтверджено.'],
     ['Development was not confirmed.', 'Розробку не підтверджено.'],
     ['Shopify pull was not confirmed.', 'Завантаження теми Shopify не підтверджено.'],
@@ -107,6 +108,7 @@ async function main(): Promise<void> {
     const configDirectory = join(root, '.shopguard');
     const configPath = join(configDirectory, 'project.json');
     mkdirSync(configDirectory, { recursive: true });
+    excludeLocalProjectState(root);
     if (existsSync(configPath)) {
       const existing = loadConfig(root);
       if (existing.store !== config.store) {

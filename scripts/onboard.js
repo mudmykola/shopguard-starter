@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { resolve, join } from 'node:path';
+import { resolve, join, basename, dirname, sep } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // This entrypoint runs before `npm ci`, so it must not import project dependencies.
@@ -51,8 +52,40 @@ export function parseStoreArgument(args) {
   if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.myshopify\.com$/.test(store)) {
     throw new Error('Вкажи домен магазину у форматі назва-магазину.myshopify.com без https://.');
   }
-  if (args.length !== 2) throw new Error('Підтримується лише параметр --store <назва-магазину.myshopify.com>.');
   return store;
+}
+
+export function parseRepositoryUrl(value) {
+  if (typeof value !== 'string' || !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(value)) {
+    throw new Error('Вкажи HTTPS URL порожнього GitHub-репозиторію, наприклад https://github.com/OWNER/STORE-THEME.git.');
+  }
+  if (/(?:shopguard-starter|shopify-theme-starter)(?:\.git)?$/i.test(value)) {
+    throw new Error('Репозиторій стартера не може бути репозиторієм теми магазину.');
+  }
+  return value.endsWith('.git') ? value : `${value}.git`;
+}
+
+export function parseOnboardingArguments(args) {
+  const store = parseStoreArgument(args);
+  let repositoryUrl;
+  let projectDir;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '--store') { index += 1; continue; }
+    if (args[index] === '--repo') {
+      if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error('Після --repo вкажи HTTPS URL порожнього GitHub-репозиторію теми.');
+      repositoryUrl = parseRepositoryUrl(args[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (args[index] === '--project-dir') {
+      if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error('Після --project-dir вкажи шлях для локальної папки теми.');
+      projectDir = args[index + 1];
+      index += 1;
+      continue;
+    }
+    throw new Error(`Невідомий параметр: ${args[index]}. Підтримуються --store, --repo та --project-dir.`);
+  }
+  return { store, repositoryUrl, projectDir };
 }
 
 function executeProcess(command, args, options) {
@@ -77,6 +110,8 @@ export async function runOnboarding(store, {
   spinnerFactory = ora,
   log = console.log,
   warn = console.warn,
+  repositoryUrl: requestedRepository,
+  projectDir,
 } = {}) {
   const npm = platform === 'win32' ? 'npm.cmd' : 'npm';
   const shopify = platform === 'win32' ? 'shopify.cmd' : 'shopify';
@@ -84,7 +119,7 @@ export async function runOnboarding(store, {
   log(`\n${pc.bold(pc.cyan('🛡️  ShopGuard'))} ${pc.dim('Початкове налаштування теми')}`);
   log(`${pc.dim('Магазин')} ${pc.bold(store)}`);
 
-  log(`\n${pc.cyan('◆ 1/4')} ${pc.bold('Встановлення, перевірки та підключення ShopGuard')}`);
+  log(`\n${pc.cyan('◆ 1/5')} ${pc.bold('Встановлення, перевірки та підключення ShopGuard')}`);
   const spinner = spinnerFactory({ text: 'Готую середовище розробки', color: 'cyan', spinner: 'dots' }).start();
   const bootstrap = await execute(npm, ['run', 'bootstrap'], { cwd, stdio: 'pipe', shell: platform === 'win32' });
   if (bootstrap.error || bootstrap.status !== 0) {
@@ -98,15 +133,42 @@ export async function runOnboarding(store, {
   const vulnerabilities = bootstrap.output.match(/(\d+ (?:low|moderate|high|critical) severity vulnerabilities?)/i)?.[1];
   if (vulnerabilities) warn(`${pc.yellow('⚠')} npm audit: ${vulnerabilities}`);
 
+  const repositoryUrl = requestedRepository ? parseRepositoryUrl(requestedRepository) : undefined;
+  const projectName = repositoryUrl
+    ? basename(new URL(repositoryUrl).pathname).replace(/\.git$/i, '')
+    : `${store.split('.')[0]}-theme`;
+  const target = projectDir ? resolve(cwd, projectDir) : resolve(dirname(cwd), projectName);
+  const starterRoot = resolve(cwd);
+  if (target === starterRoot || target.startsWith(`${starterRoot}${sep}`)) {
+    throw new Error('Папка теми має бути окремою від ShopGuard Starter. Вкажи інший --project-dir.');
+  }
+  if (existsSync(target)) throw new Error(`Папка вже існує: ${target}. Вкажи інший --project-dir або перейменуй/перемісти її вручну.`);
+
+  log(`\n${pc.cyan('◆ 2/5')} ${pc.bold(repositoryUrl ? 'Клонування окремого репозиторію теми' : 'Створення локального проєкту теми')}`);
+  if (repositoryUrl) {
+    log(`${pc.dim('Репозиторій')} ${repositoryUrl}\n${pc.dim('Папка')} ${target}`);
+    const cloned = await execute('git', ['clone', repositoryUrl, target], { cwd, stdio: 'inherit', shell: platform === 'win32' });
+    if (cloned.error || cloned.status !== 0) {
+      if (cloned.output) log(cloned.output.trim());
+      return cloned.status ?? 1;
+    }
+    const existingCommit = await execute('git', ['rev-parse', '--verify', 'HEAD'], { cwd: target, stdio: 'pipe', shell: platform === 'win32' });
+    if (existingCommit.status === 0) throw new Error(`Репозиторій теми не порожній. Клон залишився для перевірки: ${target}. ShopGuard нічого не видаляв. Створи порожнє GitHub-репо без README, License і .gitignore та вкажи іншу --project-dir або перемісти цей клон вручну.`);
+    log(`${pc.green('✔')} Порожній клієнтський репозиторій клоновано. ShopGuard Starter залишився окремо.`);
+  } else {
+    mkdirSync(target);
+    log(`${pc.dim('Локальна папка')} ${target}\n${pc.yellow('GitHub поки не під’єднано; після init можна створити репо й додати origin.')}`);
+  }
+
   const steps = [
     ['Вхід у Shopify', shopify, ['auth', 'login'], true],
-    ['Збереження магазину', process.execPath, [cli, 'configure', '--store', store, '--path', cwd], true],
-    ['Ініціалізація теми', process.execPath, [cli, 'init', '--path', cwd], true],
+    ['Збереження магазину', process.execPath, [cli, 'configure', '--store', store, '--path', target], true],
+    ['Ініціалізація теми в окремому репозиторії', process.execPath, [cli, 'init', '--path', target], true],
   ];
 
   for (let index = 0; index < steps.length; index += 1) {
     const [title, command, args, interactive] = steps[index];
-    log(`\n${pc.cyan(`◆ ${index + 2}/4`)} ${pc.bold(title)}`);
+    log(`\n${pc.cyan(`◆ ${index + 3}/5`)} ${pc.bold(title)}`);
     const result = await execute(command, args, { cwd, stdio: interactive ? 'inherit' : 'pipe', shell: platform === 'win32' });
     if (result.error || result.status !== 0) {
       log(`${pc.red('✖')} ${title} зупинено. Наступні кроки не виконувалися.`);
@@ -115,13 +177,14 @@ export async function runOnboarding(store, {
     }
     if (index < steps.length - 1) log(`${pc.green('✔')} ${title} завершено.`);
   }
-  log(`\n${pc.green('✔')} Готово. Далі керуй темою командами ShopGuard.`);
+  log(`\n${pc.green('✔')} Готово. Робоча тема: ${target}\nПерейди в цю папку для розробки; ShopGuard Starter лишається окремим.`);
   return 0;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    process.exitCode = await runOnboarding(parseStoreArgument(process.argv.slice(2)));
+    const options = parseOnboardingArguments(process.argv.slice(2));
+    process.exitCode = await runOnboarding(options.store, options);
   } catch (error) {
     console.error(`${pc.red('✖')} Помилка ShopGuard: ${error instanceof Error ? error.message : 'не вдалося запустити початкове налаштування'}`);
     process.exitCode = 1;

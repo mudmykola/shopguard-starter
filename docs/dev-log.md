@@ -73,3 +73,11 @@ Title: Avoid secret-scanner false positive in redaction test. GitHub Push Protec
 ## 2026-11-09 20:53 — Fix
 
 Title: Allow first-run onboarding before npm dependencies exist. Removed external `ora` and `picocolors` imports from `scripts/onboard.js`; it now uses a small built-in colored spinner so `npm start` can run on a fresh clone before `npm ci`. Added a cold-checkout regression test. Validation: `npm run check` passes (56 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. Module: CLI/onboarding. Issue: #8.
+
+## 2026-11-10 17:27 — Improvement
+
+Title: Separate ShopGuard tooling from Shopify-connected theme repositories. `npm start` now runs from the starter checkout, clones an empty client repo by HTTPS into a separate workspace, then configures and initializes the Shopify theme there. `sgd init` stages only theme files, keeps `.shopguard` in local Git excludes, and blocks starter repositories/source directories before Shopify access. Rewrote README and primary implementation spec for this flow. Validation: `npm run check` passes (58 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify store request, GitHub repo creation, push, commit or package publishing was performed. Module: CLI/onboarding/workflow. Issue: #8.
+
+## 2026-11-10 17:55 — Improvement
+
+Title: Allow local theme onboarding before creating a GitHub repository. `--repo` is now optional: without it, `npm start` creates a separate local `<store>-theme` workspace and initializes its theme-only `master` and `dev` branches; the user can attach an empty GitHub repository later. With `--repo`, onboarding clones that existing empty HTTPS repository. README documents both paths and the later `origin`/push commands. Validation: `npm run check` passes (59 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify store request, GitHub repository creation, push, commit or package publishing was performed. Module: CLI/onboarding/README. Issue: #8.

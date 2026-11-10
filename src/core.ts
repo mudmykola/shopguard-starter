@@ -1,5 +1,6 @@
 import {
   cpSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -302,6 +303,15 @@ export function setupLocal(root: string): string[] {
   return created;
 }
 
+export function excludeLocalProjectState(root: string, runner: CommandRunner = (command, args, cwd) => run(command, args, cwd, true)): void {
+  const gitPath = runner('git', ['rev-parse', '--git-path', 'info/exclude'], root);
+  if (!gitPath.ok || !gitPath.output.trim()) return;
+  const excludePath = resolve(root, gitPath.output.trim());
+  const entry = '/.shopguard/';
+  const contents = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : '';
+  if (!contents.split(/\r?\n/).includes(entry)) appendFileSync(excludePath, `${contents && !contents.endsWith('\n') ? '\n' : ''}${entry}\n`);
+}
+
 export const PRE_COMMIT_HOOK = '#!/bin/sh\n# shopguard-managed-pre-commit-v1\nset -eu\nsgd format --check --staged\nsgd check\n';
 
 export function managePreCommitHook(root: string, remove = false): 'installed' | 'removed' | 'unchanged' {
@@ -402,7 +412,7 @@ export function isStarterRemote(remote: string): boolean {
 }
 
 export function guardClientRepository(remote: string): void {
-  if (isStarterRemote(remote)) throw new Error('This checkout still points to the ShopGuard starter. Create a separate client repository from the GitHub template and clone it over HTTPS.');
+  if (isStarterRemote(remote)) throw new Error('This checkout still points to the ShopGuard starter. Create an empty client theme repository and run onboarding from the starter checkout.');
   if (remote && !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(remote)) {
     throw new Error('Client origin must be an HTTPS GitHub repository URL');
   }

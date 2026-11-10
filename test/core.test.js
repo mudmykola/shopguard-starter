@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { initProject } from '../dist/workflow.js';
 import {
-  changedThemeFiles, checkProject, findLiveTheme, guardClientRepository, guardPush, importNewFiles,
+  changedThemeFiles, checkProject, excludeLocalProjectState, findLiveTheme, guardClientRepository, guardPush, importNewFiles,
   parseThemeList, planThemeImport, preflight, protectedFiles, pullArgs,
   run, runInteractive, safeEnvironment, setupLocal, shopifyCommandArgs, validateConfig, selectableSourceThemes, selectSourceTheme,
   verifyThemeStructure, remotePreflight, managePreCommitHook, missingSetupDependencies, packageManagerCommand,
@@ -215,6 +215,16 @@ test('13. Client repositories require HTTPS and cannot point to the starter', ()
   assert.throws(() => guardClientRepository('https://github.com/mudmykola/shopguard-starter.git'), /starter/);
   assert.throws(() => guardClientRepository('git@github.com:owner/client.git'), /HTTPS/);
 });
+test('13d. ShopGuard project state is ignored locally without adding files to the theme repository', () => {
+  const root = tempDir();
+  try {
+    git(root, ['init', '--initial-branch', 'master']);
+    excludeLocalProjectState(root);
+    const exclude = join(root, git(root, ['rev-parse', '--git-path', 'info/exclude']));
+    assert.match(readFileSync(exclude, 'utf8'), /\/\.shopguard\//);
+    assert.equal(existsSync(join(root, '.gitignore')), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('13a. Configure can be repeated for the same store without overwriting the existing file', () => {
   const root = tempDir(); const cli = join(process.cwd(), 'dist/cli.js');
   const configure = (store) => spawnSync(process.execPath, [cli, 'configure', '--store', store, '--path', root], { encoding: 'utf8' });
@@ -227,64 +237,72 @@ test('13a. Configure can be repeated for the same store without overwriting the 
     assert.notEqual(otherStore.status, 0); assert.match(otherStore.stderr, /проєкт уже налаштовано/); assert.equal(readFileSync(file, 'utf8'), original);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
-test('13b. Init explains how to rename the starter remote before retrying', () => {
+test('13b. Init refuses to use the ShopGuard starter as a theme repository', () => {
   const root = clientRepo();
   try {
     git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']);
     const cli = join(process.cwd(), 'dist/cli.js');
     const result = spawnSync(process.execPath, [cli, 'init', '--path', root], { encoding: 'utf8' });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Перейменування не підтверджено/);
-    assert.match(result.stderr, /git remote rename origin starter/);
+    assert.match(result.stderr, /не репозиторій теми/);
+    assert.match(result.stderr, /окрему робочу папку/);
     assert.equal(git(root, ['remote', 'get-url', 'origin']), 'https://github.com/mudmykola/shopguard-starter.git');
     assert.equal(git(root, ['remote', 'get-url', 'starter'], { allowFailure: true }), '');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
-test('14. Full mocked init pulls Live locally and creates master/dev at the same baseline', async () => {
+test('13c. Init blocks starter source folders in a client theme repository before Shopify access', async () => {
   const root = clientRepo(); const deps = fakeWorkflow();
   try {
-    await initProject(root, config(), { ...deps, tempRoot: root });
+    mkdirSync(join(root, 'src')); mkdirSync(join(root, 'test'));
+    await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /код ShopGuard Starter залишається окремо/);
+    assert.equal(deps.calls.some((call) => call.command === 'shopify'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('13e. Init rejects a renamed starter remote before Shopify access', async () => {
+  const root = clientRepo(); const deps = fakeWorkflow();
+  try {
+    git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']);
+    git(root, ['remote', 'rename', 'origin', 'starter']);
+    await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /не репозиторій теми/);
+    assert.equal(deps.calls.some((call) => call.command === 'shopify'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('14. Full mocked init pulls Live locally and creates master/dev at the same baseline', async () => {
+  const root = clientRepo(); const snapshotRoot = tempDir(); const deps = fakeWorkflow();
+  try {
+    await initProject(root, config(), { ...deps, tempRoot: snapshotRoot });
     const master = git(root, ['rev-parse', 'master']); const dev = git(root, ['rev-parse', 'dev']);
     assert.equal(master, dev); assert.equal(git(root, ['branch', '--show-current']), 'dev');
     assert.equal(JSON.parse(readFileSync(join(root, '.shopguard/project.json'), 'utf8')).liveThemeId, '123');
     assert.equal(existsSync(join(root, 'layout/theme.liquid')), true);
+    assert.equal(existsSync(join(root, 'src')), false);
+    assert.equal(existsSync(join(root, 'test')), false);
+    assert.equal(existsSync(join(root, '.github')), false);
+    assert.equal(git(root, ['status', '--porcelain']), '');
     assert.deepEqual(deps.prompts, [`LIST ${storeA}`, 'PULL 123', `IMPORT ${storeA}`, `STAGE ${storeA}`, `COMMIT ${storeA}`]);
     assert.ok(deps.calls.every((call) => call.command !== 'git' || !call.args.some((arg) => arg.includes('push'))));
     assert.ok(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'list' && call.args.includes(storeA)));
     assert.ok(deps.calls.some((call) => call.command === 'shopify' && call.args[1] === 'pull' && call.args.includes('123')));
     assert.ok(deps.outputs.some((message) => message.includes('git remote -v') && message.includes('git push -u origin master')));
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(snapshotRoot, { recursive: true, force: true }); }
 });
-test('14c. Init gives exact client-origin commands when the starter remote has been renamed', async () => {
-  const root = clientRepo(); const deps = fakeWorkflow();
+test('14f. Empty client repository receives only theme files on Shopify branches', async () => {
+  const root = tempDir(); const snapshotRoot = tempDir(); const deps = fakeWorkflow();
   try {
-    git(root, ['remote', 'rename', 'origin', 'starter']);
-    await initProject(root, config(), { ...deps, tempRoot: root });
-    assert.ok(deps.outputs.some((message) => message.includes('git remote add origin https://github.com/OWNER/CLIENT-REPO.git')));
-    assert.ok(deps.outputs.some((message) => message.includes('git push -u origin master') && message.includes('git push -u origin dev')));
-    assert.deepEqual(git(root, ['remote']).split('\n'), ['starter']);
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-test('14d. Init asks before renaming a direct starter clone, then continues without pushing', async () => {
-  const root = clientRepo(); const deps = fakeWorkflow();
-  try {
-    git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']);
-    await initProject(root, config(), { ...deps, tempRoot: root });
-    assert.equal(deps.prompts[0], `RENAME STARTER REMOTE ${storeA}`);
-    assert.ok(deps.outputs.some((message) => message.includes('origin → starter') && message.includes('Жодного push')));
-    assert.deepEqual(git(root, ['remote']).split('\n'), ['starter']);
-    assert.ok(deps.outputs.some((message) => message.includes('git remote add origin https://github.com/OWNER/CLIENT-REPO.git')));
-    assert.ok(deps.calls.every((call) => call.command !== 'git' || !call.args.some((arg) => arg.includes('push'))));
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-test('14e. Declining starter remote rename leaves remotes untouched and sends no Shopify request', async () => {
-  const root = clientRepo(); const deps = fakeWorkflow({ promptResults: [false] });
-  try {
-    git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']);
-    await assert.rejects(() => initProject(root, config(), { ...deps, tempRoot: root }), /Перейменування не підтверджено/);
-    assert.equal(git(root, ['remote', 'get-url', 'origin']), 'https://github.com/mudmykola/shopguard-starter.git');
-    assert.ok(deps.calls.every((call) => call.command !== 'shopify'));
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    mkdirSync(join(root, '.shopguard'));
+    writeFileSync(join(root, '.shopguard/project.json'), `${JSON.stringify(config())}\n`);
+    git(root, ['init', '--initial-branch', 'master']);
+    git(root, ['config', 'user.name', 'ShopGuard Test']);
+    git(root, ['config', 'user.email', 'shopguard-test@example.invalid']);
+    git(root, ['config', 'commit.gpgsign', 'false']);
+    git(root, ['remote', 'add', 'origin', 'https://github.com/example-owner/alpha-theme.git']);
+    await initProject(root, config(), { ...deps, tempRoot: snapshotRoot });
+    const files = git(root, ['ls-tree', '-r', '--name-only', 'master']).split('\n').filter(Boolean);
+    assert.ok(files.includes('layout/theme.liquid'));
+    assert.ok(files.every((file) => !/^(?:src|dist|test|tests|scripts|e2e|\.shopguard)\//.test(file)));
+    assert.equal(git(root, ['rev-parse', 'master']), git(root, ['rev-parse', 'dev']));
+    assert.equal(git(root, ['status', '--porcelain']), '');
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(snapshotRoot, { recursive: true, force: true }); }
 });
 test('14b. Init lets the operator choose an unpublished source without changing the manual push target', async () => {
   const root = clientRepo(); const deps = fakeWorkflow({ chooseSourceThemeId: '456' });
@@ -352,9 +370,9 @@ test('19. Declining import leaves project theme files unchanged', async () => {
   try { await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /project folder was not changed/); assert.equal(existsSync(join(root, 'layout/theme.liquid')), false); }
   finally { rmSync(root, { recursive: true, force: true }); }
 });
-test('20. Declining the starter-remote fix blocks initialization before Shopify access', async () => {
-  const root = clientRepo(); git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']); const deps = fakeWorkflow({ promptResults: [false] });
-  try { await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /Перейменування не підтверджено/); assert.equal(deps.calls.some((call) => call.command === 'shopify'), false); }
+test('20. Starter repositories are rejected before Shopify access', async () => {
+  const root = clientRepo(); git(root, ['remote', 'set-url', 'origin', 'https://github.com/mudmykola/shopguard-starter.git']); const deps = fakeWorkflow();
+  try { await assert.rejects(initProject(root, config(), { ...deps, tempRoot: root }), /не репозиторій теми/); assert.equal(deps.calls.some((call) => call.command === 'shopify'), false); }
   finally { rmSync(root, { recursive: true, force: true }); }
 });
 test('21. Dirty unrelated Git work blocks bootstrap', async () => {
