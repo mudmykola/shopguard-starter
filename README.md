@@ -134,13 +134,22 @@ git pull --ff-only origin dev
 
 # створи окрему гілку для задачі
 git switch -c feature/header-menu
+
+# запусти Shopify preview у цій гілці
+sgd dev
 ```
 
-Працюй локально, запускай `sgd check`, потім надішли гілку й відкрий PR у `dev`:
+Залиш цей термінал із `sgd dev` відкритим — Shopify CLI стежить за файлами й оновлює preview. Редагуй тему у WebStorm; для перевірок і Git-команд відкрий другий термінал у тій самій папці теми.
+
+**Перед перемиканням гілки зупини `sgd dev` через `Ctrl+C`.** Інакше Shopify CLI продовжить стежити за тією ж папкою, коли Git замінить у ній файли на вміст іншої гілки. Після перемикання запусти `sgd dev` знову.
+
+Після змін відформатуй і перевір тему, потім надішли feature-гілку й відкрий PR у `dev`:
 
 ```bash
+sgd format
 sgd check
-git add .
+git status
+git add <змінені-файли>
 git commit -m "feat(theme): update header menu"
 git push -u origin feature/header-menu
 ```

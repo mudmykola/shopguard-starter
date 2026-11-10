@@ -85,3 +85,7 @@ Title: Allow local theme onboarding before creating a GitHub repository. `--repo
 ## 2026-11-10 18:05 — Improvement
 
 Title: Add numeric shortcuts to interactive choices. Confirmation and source-theme menus now display numbered options; typing an option number selects it and Enter confirms, while arrow-key navigation remains available. Updated the Ukrainian README and added a regression test for numbered menu rendering. Validation: `npm run check` passes (60 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; `git diff --check` passes. No Shopify request, GitHub repo creation, push, commit or package publishing was performed. Module: CLI/terminal UX. Issue: #8.
+
+## 2026-11-10 18:13 — Improvement
+
+Title: Clarify the daily theme development and preview workflow. README now starts `sgd dev` after creating a feature branch, explains keeping it open while editing, and instructs developers to stop it with `Ctrl+C` before switching branches. Added format, check, status, and changed-file staging commands. Validation: `git diff --check` passes. Documentation-only change; no Shopify request or theme upload was run. Module: README/development workflow. Issue: #8.
