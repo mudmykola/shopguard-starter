@@ -33,7 +33,8 @@ import {
 } from './core.js';
 import { initProject } from './workflow.js';
 import { pushTheme, pushThemeBaseline } from './push.js';
-import { chooseTheme, confirmAction, outputMessage, printError, runWithSpinner } from './terminal-ui.js';
+import { chooseTheme, confirmAction, outputMessage, printError, reviewThemeCheckIssues, runWithSpinner } from './terminal-ui.js';
+import { parseThemeCheckReport } from './theme-check.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '--help';
@@ -308,7 +309,7 @@ async function main(): Promise<void> {
     const errors = checkProject(root);
     if (errors.length) fail(errors.join('\n'));
     const checks: [string, string[]][] = [];
-    if (isTheme(root)) checks.push(['shopify', ['theme', 'check', '--path', root]]);
+    if (isTheme(root)) checks.push(['shopify', ['theme', 'check', '--path', root, '--json']]);
     if (existsSync(join(root, 'eslint.config.js')) || existsSync(join(root, 'eslint.config.mjs')) || existsSync(join(root, '.eslintrc.json'))) {
       if (existsSync(join(root, 'node_modules/.bin/eslint'))) checks.push(['npx', ['--no-install', 'eslint', '.']]);
       else console.log('ESLint config found but dependency is missing; install it in this theme project to enable the check.');
@@ -320,7 +321,9 @@ async function main(): Promise<void> {
     }
     for (const [tool, toolArgs] of checks) {
       const result = run(tool, toolArgs, root, true);
-      console.log(result.output);
+      const themeReport = tool === 'shopify' ? parseThemeCheckReport(result.output, root) : undefined;
+      if (themeReport) await reviewThemeCheckIssues(themeReport);
+      else console.log(result.output);
       if (!result.ok) fail(`${tool} quality check failed.`);
     }
     console.log(`ShopGuard config and theme structure passed${checks.length ? `; ${checks.length} tool check(s) passed` : '; no optional linter configs found'}.`);

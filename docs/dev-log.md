@@ -89,3 +89,7 @@ Title: Add numeric shortcuts to interactive choices. Confirmation and source-the
 ## 2026-11-10 18:13 — Improvement
 
 Title: Clarify the daily theme development and preview workflow. README now starts `sgd dev` after creating a feature branch, explains keeping it open while editing, and instructs developers to stop it with `Ctrl+C` before switching branches. Added format, check, status, and changed-file staging commands. Validation: `git diff --check` passes. Documentation-only change; no Shopify request or theme upload was run. Module: README/development workflow. Issue: #8.
+
+## 2026-11-10 18:29 — Improvement
+
+Title: Add an interactive Theme Check issue explorer. `sgd check` requests Shopify CLI's structured JSON report, prints compact severity totals, and in a TTY opens severity groups and a paginated finding list. Selecting a finding displays its relative file, line/column, rule, and full message; non-interactive output is capped at 12 findings with a hint to use an interactive terminal. Added parser and summary regression tests and documented the interaction. Validation: `npm run check` passes (63 offline tests); three preview E2E tests skip without `SHOPGUARD_PREVIEW_URL`; local `shopify theme check --path . --json --fail-level crash` returns valid JSON; `git diff --check` passes. No Shopify store request or mutation was performed. Module: CLI/Theme Check UX. Issue: #9.

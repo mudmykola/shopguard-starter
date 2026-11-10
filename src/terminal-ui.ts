@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { stdin, stdout, stderr } from 'node:process';
-import { select } from '@inquirer/prompts';
+import { input, select } from '@inquirer/prompts';
 import ora from 'ora';
 import pc from 'picocolors';
 import { redactOutput, safeEnvironment, type CommandResult, type ShopifyTheme } from './core.js';
+import { formatThemeCheckIssue, formatThemeCheckSummary, summarizeThemeCheckIssues, type ThemeCheckIssue, type ThemeCheckSeverity } from './theme-check.js';
 
 export const numberedSelectionTheme = { indexMode: 'number' as const };
 
@@ -76,6 +77,72 @@ export async function chooseTheme(themes: ShopifyTheme[]): Promise<string | unde
     });
   } catch {
     return undefined;
+  }
+}
+
+export async function reviewThemeCheckIssues(issues: ThemeCheckIssue[]): Promise<void> {
+  console.log(`\n${pc.bold('🔎 Перевірка теми')}\n${formatThemeCheckSummary(issues)}`);
+  if (!issues.length) return;
+
+  if (!stdin.isTTY || !stdout.isTTY) {
+    const limit = 12;
+    console.log(issues.slice(0, limit).map((issue) => `${formatThemeCheckIssue(issue)}\n  ${issue.message}`).join('\n'));
+    if (issues.length > limit) console.log(`… ще ${issues.length - limit} зауважень. Запусти sgd check у терміналі, щоб переглянути їх інтерактивно.`);
+    return;
+  }
+
+  const labels: Record<ThemeCheckSeverity, string> = { error: '⛔ Помилки', warning: '⚠️ Попередження', info: 'ℹ️ Інформація' };
+  while (true) {
+    const summary = summarizeThemeCheckIssues(issues);
+    const allGroups: { name: string; value: ThemeCheckSeverity; count: number }[] = [
+      { name: `${labels.error} · ${summary.errors}`, value: 'error', count: summary.errors },
+      { name: `${labels.warning} · ${summary.warnings}`, value: 'warning', count: summary.warnings },
+      { name: `${labels.info} · ${summary.info}`, value: 'info', count: summary.info },
+    ];
+    const groups = allGroups.filter((group) => group.count > 0);
+    let severity: ThemeCheckSeverity | 'done';
+    try {
+      severity = await select<ThemeCheckSeverity | 'done'>({
+        message: 'Що переглянути? · цифра + Enter або стрілки + Enter',
+        choices: [...groups.map(({ name, value }) => ({ name, value })), { name: '✓ Завершити перегляд', value: 'done' }],
+        theme: numberedSelectionTheme,
+        loop: false,
+      });
+    } catch {
+      return;
+    }
+    if (severity === 'done') return;
+
+    const findings = issues.filter((issue) => issue.severity === severity);
+    while (true) {
+      let selected: number | 'back';
+      try {
+        selected = await select<number>({
+          message: `${labels[severity]} · вибери зауваження, щоб відкрити деталі`,
+          choices: [
+            ...findings.map((issue, index) => ({
+              name: `${issue.file}:${issue.line} · ${issue.check}`,
+              value: index,
+              description: `${issue.message.replace(/\s+/g, ' ').trim().slice(0, 100)}${issue.message.length > 100 ? '…' : ''}`,
+            })),
+            { name: '↩ Назад до категорій', value: -1 },
+          ],
+          theme: numberedSelectionTheme,
+          pageSize: 10,
+          loop: false,
+        });
+      } catch {
+        return;
+      }
+      if (selected === -1) break;
+      const issue = findings[selected];
+      if (!issue) continue;
+      console.clear();
+      console.log(`${pc.bold(labels[severity])} · ${issue.check}`);
+      console.log(`${pc.dim(`${issue.file}:${issue.line}:${issue.column}`)}\n`);
+      console.log(issue.message);
+      try { await input({ message: 'Enter — повернутися до списку' }); } catch { return; }
+    }
   }
 }
 
